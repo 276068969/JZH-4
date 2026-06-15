@@ -347,3 +347,476 @@ export const events: EventRecord[] = [
     resolvedAt: "2026-06-11 06:30"
   }
 ];
+
+export interface Ship {
+  id: number;
+  mmsi: string;
+  name: string;
+  type: string;
+  flag: string;
+  length?: number;
+  width?: number;
+  draft?: number;
+  grossTonnage?: number;
+  status: "normal" | "warning" | "abnormal";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShipPosition {
+  id: number;
+  shipId: number;
+  mmsi: string;
+  latitude: number;
+  longitude: number;
+  speed: number;
+  course?: number;
+  heading?: number;
+  seaArea?: string;
+  status: "sailing" | "anchored" | "stopped" | "moored";
+  reportedAt: string;
+}
+
+export interface ShipPositionWithShipInfo extends ShipPosition {
+  shipName?: string;
+  shipType?: string;
+  shipStatus?: string;
+}
+
+export interface ShipAnomaly {
+  id: number;
+  shipId: number;
+  mmsi: string;
+  shipName: string;
+  anomalyType: string;
+  description?: string;
+  seaArea?: string;
+  latitude?: number;
+  longitude?: number;
+  level: "low" | "medium" | "high";
+  status: "active" | "acknowledged" | "resolved";
+  detectedAt: string;
+  acknowledgedAt?: string;
+  resolvedAt?: string;
+  disposalNote?: string;
+}
+
+export interface ProtectedAreaIntrusion {
+  id: number;
+  shipId: number;
+  mmsi: string;
+  shipName: string;
+  protectedArea: string;
+  seaArea: string;
+  entryLatitude: number;
+  entryLongitude: number;
+  entryTime: string;
+  exitLatitude?: number;
+  exitLongitude?: number;
+  exitTime?: string;
+  durationMinutes?: number;
+  status: "active" | "resolved";
+  level: "low" | "medium" | "high";
+  disposalNote?: string;
+  detectedAt: string;
+}
+
+export interface ShipStayRecord {
+  id: number;
+  shipId: number;
+  mmsi: string;
+  shipName: string;
+  seaArea: string;
+  areaName: string;
+  latitude: number;
+  longitude: number;
+  arrivalTime: string;
+  departureTime?: string;
+  durationMinutes?: number;
+  isOverstay: boolean;
+  maxAllowedMinutes: number;
+  status: "staying" | "completed";
+  createdAt: string;
+}
+
+export const ships: Ship[] = [
+  {
+    id: 1,
+    mmsi: "413300001",
+    name: "远洋号",
+    type: "货轮",
+    flag: "中国",
+    length: 220.5,
+    width: 32.8,
+    draft: 12.5,
+    grossTonnage: 65000,
+    status: "normal",
+    createdAt: "2026-01-15 10:30",
+    updatedAt: "2026-06-15 09:30"
+  },
+  {
+    id: 2,
+    mmsi: "413300002",
+    name: "海巡101",
+    type: "执法船",
+    flag: "中国",
+    length: 85.0,
+    width: 12.5,
+    draft: 4.2,
+    grossTonnage: 2500,
+    status: "normal",
+    createdAt: "2026-02-20 14:15",
+    updatedAt: "2026-06-15 09:28"
+  },
+  {
+    id: 3,
+    mmsi: "413300003",
+    name: "蓝鲸号",
+    type: "油轮",
+    flag: "巴拿马",
+    length: 330.0,
+    width: 58.0,
+    draft: 22.5,
+    grossTonnage: 150000,
+    status: "warning",
+    createdAt: "2026-03-10 08:45",
+    updatedAt: "2026-06-15 09:32"
+  },
+  {
+    id: 4,
+    mmsi: "413300004",
+    name: "渔政888",
+    type: "渔业船",
+    flag: "中国",
+    length: 45.0,
+    width: 8.5,
+    draft: 3.2,
+    grossTonnage: 500,
+    status: "normal",
+    createdAt: "2026-01-05 16:20",
+    updatedAt: "2026-06-15 09:25"
+  },
+  {
+    id: 5,
+    mmsi: "413300005",
+    name: "黑珍珠",
+    type: "散货船",
+    flag: "利比里亚",
+    length: 180.0,
+    width: 28.0,
+    draft: 10.5,
+    grossTonnage: 35000,
+    status: "abnormal",
+    createdAt: "2026-04-12 11:00",
+    updatedAt: "2026-06-15 09:35"
+  },
+  {
+    id: 6,
+    mmsi: "413300006",
+    name: "东方之星",
+    type: "客轮",
+    flag: "中国",
+    length: 135.0,
+    width: 20.0,
+    draft: 5.8,
+    grossTonnage: 8000,
+    status: "normal",
+    createdAt: "2026-02-28 09:10",
+    updatedAt: "2026-06-15 09:31"
+  },
+  {
+    id: 7,
+    mmsi: "413300007",
+    name: "探索者号",
+    type: "科考船",
+    flag: "中国",
+    length: 95.0,
+    width: 18.0,
+    draft: 6.5,
+    grossTonnage: 3200,
+    status: "normal",
+    createdAt: "2026-03-25 13:45",
+    updatedAt: "2026-06-15 09:29"
+  },
+  {
+    id: 8,
+    mmsi: "413300008",
+    name: "幽灵号",
+    type: "货轮",
+    flag: "塞拉利昂",
+    length: 165.0,
+    width: 25.0,
+    draft: 9.8,
+    grossTonnage: 28000,
+    status: "abnormal",
+    createdAt: "2026-05-01 07:30",
+    updatedAt: "2026-06-15 09:33"
+  }
+];
+
+export const shipPositions: ShipPosition[] = [
+  {
+    id: 1,
+    shipId: 1,
+    mmsi: "413300001",
+    latitude: 30.724,
+    longitude: 122.814,
+    speed: 12.5,
+    course: 135.0,
+    heading: 135.0,
+    seaArea: "东港近岸海域",
+    status: "sailing",
+    reportedAt: "2026-06-15 09:30"
+  },
+  {
+    id: 2,
+    shipId: 2,
+    mmsi: "413300002",
+    latitude: 30.512,
+    longitude: 122.443,
+    speed: 8.2,
+    course: 90.0,
+    heading: 92.0,
+    seaArea: "蓝湾工业岸线",
+    status: "sailing",
+    reportedAt: "2026-06-15 09:28"
+  },
+  {
+    id: 3,
+    shipId: 3,
+    mmsi: "413300003",
+    latitude: 30.193,
+    longitude: 122.025,
+    speed: 0.5,
+    course: 0.0,
+    heading: 45.0,
+    seaArea: "南礁保护区",
+    status: "anchored",
+    reportedAt: "2026-06-15 09:32"
+  },
+  {
+    id: 4,
+    shipId: 4,
+    mmsi: "413300004",
+    latitude: 30.971,
+    longitude: 121.901,
+    speed: 3.8,
+    course: 270.0,
+    heading: 268.0,
+    seaArea: "北湾养殖区",
+    status: "sailing",
+    reportedAt: "2026-06-15 09:25"
+  },
+  {
+    id: 5,
+    shipId: 5,
+    mmsi: "413300005",
+    latitude: 30.205,
+    longitude: 122.038,
+    speed: 0.2,
+    course: 0.0,
+    heading: 180.0,
+    seaArea: "南礁保护区",
+    status: "anchored",
+    reportedAt: "2026-06-15 09:35"
+  },
+  {
+    id: 6,
+    shipId: 6,
+    mmsi: "413300006",
+    latitude: 30.65,
+    longitude: 122.75,
+    speed: 15.2,
+    course: 45.0,
+    heading: 43.0,
+    seaArea: "东港近岸海域",
+    status: "sailing",
+    reportedAt: "2026-06-15 09:31"
+  },
+  {
+    id: 7,
+    shipId: 7,
+    mmsi: "413300007",
+    latitude: 30.45,
+    longitude: 122.35,
+    speed: 6.5,
+    course: 180.0,
+    heading: 178.0,
+    seaArea: "蓝湾工业岸线",
+    status: "sailing",
+    reportedAt: "2026-06-15 09:29"
+  },
+  {
+    id: 8,
+    shipId: 8,
+    mmsi: "413300008",
+    latitude: 30.22,
+    longitude: 122.055,
+    speed: 0.0,
+    course: 0.0,
+    heading: 90.0,
+    seaArea: "南礁保护区",
+    status: "stopped",
+    reportedAt: "2026-06-15 09:33"
+  }
+];
+
+export const shipAnomalies: ShipAnomaly[] = [
+  {
+    id: 1,
+    shipId: 5,
+    mmsi: "413300005",
+    shipName: "黑珍珠",
+    anomalyType: "AIS信号异常",
+    description: "船舶AIS信号间歇性中断，疑似故意关闭",
+    seaArea: "南礁保护区",
+    latitude: 30.205,
+    longitude: 122.038,
+    level: "high",
+    status: "active",
+    detectedAt: "2026-06-15 08:15"
+  },
+  {
+    id: 2,
+    shipId: 8,
+    mmsi: "413300008",
+    shipName: "幽灵号",
+    anomalyType: "非法停泊",
+    description: "船舶在保护区核心区域停泊超过6小时",
+    seaArea: "南礁保护区",
+    latitude: 30.22,
+    longitude: 122.055,
+    level: "high",
+    status: "active",
+    detectedAt: "2026-06-15 03:30"
+  },
+  {
+    id: 3,
+    shipId: 3,
+    mmsi: "413300003",
+    shipName: "蓝鲸号",
+    anomalyType: "航速异常",
+    description: "油轮在禁航区航速低于安全阈值",
+    seaArea: "南礁保护区",
+    latitude: 30.193,
+    longitude: 122.025,
+    level: "medium",
+    status: "acknowledged",
+    detectedAt: "2026-06-14 22:45"
+  }
+];
+
+export const protectedAreaIntrusions: ProtectedAreaIntrusion[] = [
+  {
+    id: 1,
+    shipId: 5,
+    mmsi: "413300005",
+    shipName: "黑珍珠",
+    protectedArea: "南礁核心保护区",
+    seaArea: "南礁保护区",
+    entryLatitude: 30.198,
+    entryLongitude: 122.03,
+    entryTime: "2026-06-15 02:30",
+    status: "active",
+    level: "high",
+    detectedAt: "2026-06-15 02:30"
+  },
+  {
+    id: 2,
+    shipId: 8,
+    mmsi: "413300008",
+    shipName: "幽灵号",
+    protectedArea: "南礁核心保护区",
+    seaArea: "南礁保护区",
+    entryLatitude: 30.215,
+    entryLongitude: 122.05,
+    entryTime: "2026-06-15 01:15",
+    status: "active",
+    level: "high",
+    detectedAt: "2026-06-15 01:15"
+  },
+  {
+    id: 3,
+    shipId: 3,
+    mmsi: "413300003",
+    shipName: "蓝鲸号",
+    protectedArea: "南礁缓冲区",
+    seaArea: "南礁保护区",
+    entryLatitude: 30.185,
+    entryLongitude: 122.015,
+    entryTime: "2026-06-14 20:00",
+    exitLatitude: 30.19,
+    exitLongitude: 122.02,
+    exitTime: "2026-06-15 06:00",
+    durationMinutes: 600,
+    status: "resolved",
+    level: "medium",
+    disposalNote: "已驱离，船舶已离开保护区",
+    detectedAt: "2026-06-14 20:00"
+  }
+];
+
+export const shipStayRecords: ShipStayRecord[] = [
+  {
+    id: 1,
+    shipId: 5,
+    mmsi: "413300005",
+    shipName: "黑珍珠",
+    seaArea: "南礁保护区",
+    areaName: "核心保护区A区",
+    latitude: 30.205,
+    longitude: 122.038,
+    arrivalTime: "2026-06-15 02:30",
+    isOverstay: true,
+    maxAllowedMinutes: 120,
+    status: "staying",
+    createdAt: "2026-06-15 02:30"
+  },
+  {
+    id: 2,
+    shipId: 8,
+    mmsi: "413300008",
+    shipName: "幽灵号",
+    seaArea: "南礁保护区",
+    areaName: "核心保护区B区",
+    latitude: 30.22,
+    longitude: 122.055,
+    arrivalTime: "2026-06-15 01:15",
+    isOverstay: true,
+    maxAllowedMinutes: 120,
+    status: "staying",
+    createdAt: "2026-06-15 01:15"
+  },
+  {
+    id: 3,
+    shipId: 3,
+    mmsi: "413300003",
+    shipName: "蓝鲸号",
+    seaArea: "南礁保护区",
+    areaName: "缓冲区锚地",
+    latitude: 30.193,
+    longitude: 122.025,
+    arrivalTime: "2026-06-14 20:00",
+    departureTime: "2026-06-15 06:00",
+    durationMinutes: 600,
+    isOverstay: false,
+    maxAllowedMinutes: 480,
+    status: "completed",
+    createdAt: "2026-06-14 20:00"
+  },
+  {
+    id: 4,
+    shipId: 1,
+    mmsi: "413300001",
+    shipName: "远洋号",
+    seaArea: "东港近岸海域",
+    areaName: "东港锚地",
+    latitude: 30.724,
+    longitude: 122.814,
+    arrivalTime: "2026-06-15 06:00",
+    isOverstay: false,
+    maxAllowedMinutes: 240,
+    status: "staying",
+    createdAt: "2026-06-15 06:00"
+  }
+];

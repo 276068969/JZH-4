@@ -5,6 +5,7 @@
       <el-menu router :default-active="$route.path" background-color="#12394f" text-color="#d7e8ef" active-text-color="#ffffff">
         <el-menu-item index="/dashboard">监管大屏</el-menu-item>
         <el-menu-item index="/sea-areas">海域基础信息</el-menu-item>
+        <el-menu-item index="/ships">船舶监管</el-menu-item>
         <el-menu-item index="/events">事件监管</el-menu-item>
         <el-menu-item index="/admin">后台管理</el-menu-item>
       </el-menu>

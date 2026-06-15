@@ -11,9 +11,20 @@ import {
   events,
   monitoringPoints,
   seaAreas,
+  ships,
+  shipPositions,
+  shipAnomalies,
+  protectedAreaIntrusions,
+  shipStayRecords,
   type AlertResult,
   type AlertRule,
-  type EventRecord
+  type EventRecord,
+  type Ship,
+  type ShipPosition,
+  type ShipPositionWithShipInfo,
+  type ShipAnomaly,
+  type ProtectedAreaIntrusion,
+  type ShipStayRecord
 } from "./seed.js";
 
 dotenv.config();
@@ -55,21 +66,51 @@ const alertRuleSchema = z.object({
   enabled: z.boolean().default(true)
 });
 
+const shipPositionSchema = z.object({
+  mmsi: z.string().min(5),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  speed: z.number().min(0).max(100).default(0),
+  course: z.number().min(0).max(360).optional(),
+  heading: z.number().min(0).max(360).optional(),
+  seaArea: z.string().optional(),
+  status: z.enum(["sailing", "anchored", "stopped", "moored"]).default("sailing")
+});
+
+const shipAnomalyStatusSchema = z.object({
+  status: z.enum(["active", "acknowledged", "resolved"]),
+  disposalNote: z.string().optional()
+});
+
+const intrusionStatusSchema = z.object({
+  status: z.enum(["active", "resolved"]),
+  disposalNote: z.string().optional()
+});
+
 function buildMetrics() {
   const warningPoints = monitoringPoints.filter((point) => point.status === "warning").length;
   const offlinePoints = monitoringPoints.filter((point) => point.status === "offline").length;
   const openEvents = events.filter((event) => event.status !== "resolved").length;
   const activeAlerts = alertResults.filter((r) => r.status === "active").length;
+  const activeShips = shipPositions.length;
+  const abnormalShips = ships.filter((s) => s.status === "abnormal").length;
+  const activeIntrusions = protectedAreaIntrusions.filter((i) => i.status === "active").length;
+  const overstayShips = shipStayRecords.filter((s) => s.isOverstay && s.status === "staying").length;
+  const activeAnomalies = shipAnomalies.filter((a) => a.status === "active").length;
 
   return {
     seaAreas: 8,
     monitoringPoints: monitoringPoints.length,
     warningPoints,
     offlinePoints,
-    shipsOnline: 126,
+    shipsOnline: activeShips,
     openEvents,
     activeAlerts,
-    waterQualityRate: 91.6
+    waterQualityRate: 91.6,
+    abnormalShips,
+    activeIntrusions,
+    overstayShips,
+    activeAnomalies
   };
 }
 
@@ -396,6 +437,284 @@ app.patch("/api/events/:id/status", requireAuth, (req, res) => {
 
 app.get("/api/admin/users", requireAuth, (_req, res) => {
   res.json(accounts.map(({ password: _password, ...account }) => account));
+});
+
+app.get("/api/ships", requireAuth, (req, res) => {
+  const status = req.query.status as string | undefined;
+  const seaArea = req.query.seaArea as string | undefined;
+  const keyword = req.query.keyword as string | undefined;
+
+  let filtered = [...ships];
+
+  if (status) {
+    filtered = filtered.filter((s) => s.status === status);
+  }
+  if (seaArea) {
+    const shipIdsInArea = shipPositions
+      .filter((p) => p.seaArea === seaArea)
+      .map((p) => p.shipId);
+    filtered = filtered.filter((s) => shipIdsInArea.includes(s.id));
+  }
+  if (keyword) {
+    const kw = keyword.toLowerCase();
+    filtered = filtered.filter(
+      (s) => s.name.toLowerCase().includes(kw) || s.mmsi.includes(kw) || s.type.toLowerCase().includes(kw)
+    );
+  }
+
+  const result = filtered.map((ship) => {
+    const latestPosition = shipPositions
+      .filter((p) => p.shipId === ship.id)
+      .sort((a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime())[0];
+    return {
+      ...ship,
+      latestPosition
+    };
+  });
+
+  res.json(result);
+});
+
+app.get("/api/ships/:id", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const ship = ships.find((s) => s.id === id);
+
+  if (!ship) {
+    res.status(404).json({ message: "船舶不存在" });
+    return;
+  }
+
+  const latestPosition = shipPositions
+    .filter((p) => p.shipId === ship.id)
+    .sort((a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime())[0];
+
+  const positionHistory = shipPositions
+    .filter((p) => p.shipId === ship.id)
+    .sort((a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime())
+    .slice(0, 20);
+
+  const anomalies = shipAnomalies.filter((a) => a.shipId === ship.id);
+  const intrusions = protectedAreaIntrusions.filter((i) => i.shipId === ship.id);
+  const stayRecords = shipStayRecords.filter((s) => s.shipId === ship.id);
+
+  res.json({
+    ship,
+    latestPosition,
+    positionHistory,
+    anomalies,
+    intrusions,
+    stayRecords
+  });
+});
+
+app.get("/api/ships/positions/latest", requireAuth, (_req, res) => {
+  const latestPositions: ShipPositionWithShipInfo[] = [];
+  const seenShipIds = new Set<number>();
+
+  const sortedPositions = [...shipPositions].sort(
+    (a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime()
+  );
+
+  for (const pos of sortedPositions) {
+    if (!seenShipIds.has(pos.shipId)) {
+      seenShipIds.add(pos.shipId);
+      const ship = ships.find((s) => s.id === pos.shipId);
+      latestPositions.push({
+        ...pos,
+        shipName: ship?.name,
+        shipType: ship?.type,
+        shipStatus: ship?.status
+      });
+    }
+  }
+
+  res.json(latestPositions);
+});
+
+app.post("/api/ships/positions", requireAuth, (req, res) => {
+  const parsed = shipPositionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "位置数据格式错误" });
+    return;
+  }
+
+  let ship = ships.find((s) => s.mmsi === parsed.data.mmsi);
+  if (!ship) {
+    ship = {
+      id: Math.max(...ships.map((s) => s.id)) + 1,
+      mmsi: parsed.data.mmsi,
+      name: `未知船舶(${parsed.data.mmsi})`,
+      type: "未知",
+      flag: "未知",
+      status: "normal",
+      createdAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+      updatedAt: new Date().toISOString().slice(0, 16).replace("T", " ")
+    };
+    ships.push(ship);
+  }
+
+  const position: ShipPosition = {
+    id: Math.max(...shipPositions.map((p) => p.id)) + 1,
+    shipId: ship.id,
+    mmsi: parsed.data.mmsi,
+    latitude: parsed.data.latitude,
+    longitude: parsed.data.longitude,
+    speed: parsed.data.speed,
+    course: parsed.data.course,
+    heading: parsed.data.heading,
+    seaArea: parsed.data.seaArea,
+    status: parsed.data.status,
+    reportedAt: new Date().toISOString().slice(0, 16).replace("T", " ")
+  };
+
+  shipPositions.unshift(position);
+  ship.updatedAt = position.reportedAt;
+
+  res.status(201).json(position);
+});
+
+app.get("/api/ships/anomalies", requireAuth, (req, res) => {
+  const status = req.query.status as string | undefined;
+  const level = req.query.level as string | undefined;
+  const anomalyType = req.query.anomalyType as string | undefined;
+
+  let filtered = [...shipAnomalies];
+
+  if (status) {
+    filtered = filtered.filter((a) => a.status === status);
+  }
+  if (level) {
+    filtered = filtered.filter((a) => a.level === level);
+  }
+  if (anomalyType) {
+    filtered = filtered.filter((a) => a.anomalyType === anomalyType);
+  }
+
+  res.json(filtered);
+});
+
+app.patch("/api/ships/anomalies/:id/status", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const parsed = shipAnomalyStatusSchema.safeParse(req.body);
+  const anomaly = shipAnomalies.find((a) => a.id === id);
+
+  if (!anomaly) {
+    res.status(404).json({ message: "异常记录不存在" });
+    return;
+  }
+
+  if (!parsed.success) {
+    res.status(400).json({ message: "参数格式错误" });
+    return;
+  }
+
+  const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+  anomaly.status = parsed.data.status;
+  if (parsed.data.disposalNote) {
+    anomaly.disposalNote = parsed.data.disposalNote;
+  }
+  if (parsed.data.status === "acknowledged" && !anomaly.acknowledgedAt) {
+    anomaly.acknowledgedAt = now;
+  }
+  if (parsed.data.status === "resolved") {
+    anomaly.resolvedAt = now;
+  }
+
+  res.json(anomaly);
+});
+
+app.get("/api/ships/intrusions", requireAuth, (req, res) => {
+  const status = req.query.status as string | undefined;
+  const level = req.query.level as string | undefined;
+  const protectedArea = req.query.protectedArea as string | undefined;
+
+  let filtered = [...protectedAreaIntrusions];
+
+  if (status) {
+    filtered = filtered.filter((i) => i.status === status);
+  }
+  if (level) {
+    filtered = filtered.filter((i) => i.level === level);
+  }
+  if (protectedArea) {
+    filtered = filtered.filter((i) => i.protectedArea === protectedArea);
+  }
+
+  res.json(filtered);
+});
+
+app.patch("/api/ships/intrusions/:id/status", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const parsed = intrusionStatusSchema.safeParse(req.body);
+  const intrusion = protectedAreaIntrusions.find((i) => i.id === id);
+
+  if (!intrusion) {
+    res.status(404).json({ message: "闯入记录不存在" });
+    return;
+  }
+
+  if (!parsed.success) {
+    res.status(400).json({ message: "参数格式错误" });
+    return;
+  }
+
+  intrusion.status = parsed.data.status;
+  if (parsed.data.disposalNote) {
+    intrusion.disposalNote = parsed.data.disposalNote;
+  }
+  if (parsed.data.status === "resolved" && !intrusion.exitTime) {
+    const now = new Date();
+    intrusion.exitTime = now.toISOString().slice(0, 16).replace("T", " ");
+    intrusion.exitLatitude = intrusion.entryLatitude + 0.01;
+    intrusion.exitLongitude = intrusion.entryLongitude + 0.01;
+    const entryTime = new Date(intrusion.entryTime.replace(" ", "T"));
+    intrusion.durationMinutes = Math.floor((now.getTime() - entryTime.getTime()) / 60000);
+  }
+
+  res.json(intrusion);
+});
+
+app.get("/api/ships/stay-records", requireAuth, (req, res) => {
+  const status = req.query.status as string | undefined;
+  const isOverstay = req.query.isOverstay as string | undefined;
+  const seaArea = req.query.seaArea as string | undefined;
+
+  let filtered = [...shipStayRecords];
+
+  if (status) {
+    filtered = filtered.filter((s) => s.status === status);
+  }
+  if (isOverstay !== undefined) {
+    filtered = filtered.filter((s) => s.isOverstay === (isOverstay === "true"));
+  }
+  if (seaArea) {
+    filtered = filtered.filter((s) => s.seaArea === seaArea);
+  }
+
+  res.json(filtered);
+});
+
+app.get("/api/ships/summary", requireAuth, (_req, res) => {
+  const summary = {
+    totalShips: ships.length,
+    normalShips: ships.filter((s) => s.status === "normal").length,
+    warningShips: ships.filter((s) => s.status === "warning").length,
+    abnormalShips: ships.filter((s) => s.status === "abnormal").length,
+    activePositions: shipPositions.length,
+    activeAnomalies: shipAnomalies.filter((a) => a.status === "active").length,
+    acknowledgedAnomalies: shipAnomalies.filter((a) => a.status === "acknowledged").length,
+    resolvedAnomalies: shipAnomalies.filter((a) => a.status === "resolved").length,
+    activeIntrusions: protectedAreaIntrusions.filter((i) => i.status === "active").length,
+    resolvedIntrusions: protectedAreaIntrusions.filter((i) => i.status === "resolved").length,
+    stayingShips: shipStayRecords.filter((s) => s.status === "staying").length,
+    overstayShips: shipStayRecords.filter((s) => s.isOverstay && s.status === "staying").length,
+    anomalyTypes: [
+      { type: "AIS信号异常", count: shipAnomalies.filter((a) => a.anomalyType === "AIS信号异常").length },
+      { type: "非法停泊", count: shipAnomalies.filter((a) => a.anomalyType === "非法停泊").length },
+      { type: "航速异常", count: shipAnomalies.filter((a) => a.anomalyType === "航速异常").length }
+    ]
+  };
+  res.json(summary);
 });
 
 app.listen(port, () => {

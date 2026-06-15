@@ -97,3 +97,53 @@ export async function fetchSeaAreas() {
   const { data } = await api.get("/sea-areas");
   return data;
 }
+
+export async function fetchShips(params?: Record<string, string>) {
+  const { data } = await api.get("/ships", { params });
+  return data;
+}
+
+export async function fetchShipDetail(id: number) {
+  const { data } = await api.get(`/ships/${id}`);
+  return data;
+}
+
+export async function fetchLatestShipPositions() {
+  const { data } = await api.get("/ships/positions/latest");
+  return data;
+}
+
+export async function reportShipPosition(payload: Record<string, unknown>) {
+  const { data } = await api.post("/ships/positions", payload);
+  return data;
+}
+
+export async function fetchShipAnomalies(params?: Record<string, string>) {
+  const { data } = await api.get("/ships/anomalies", { params });
+  return data;
+}
+
+export async function updateShipAnomalyStatus(id: number, payload: Record<string, unknown>) {
+  const { data } = await api.patch(`/ships/anomalies/${id}/status`, payload);
+  return data;
+}
+
+export async function fetchShipIntrusions(params?: Record<string, string>) {
+  const { data } = await api.get("/ships/intrusions", { params });
+  return data;
+}
+
+export async function updateShipIntrusionStatus(id: number, payload: Record<string, unknown>) {
+  const { data } = await api.patch(`/ships/intrusions/${id}/status`, payload);
+  return data;
+}
+
+export async function fetchShipStayRecords(params?: Record<string, string>) {
+  const { data } = await api.get("/ships/stay-records", { params });
+  return data;
+}
+
+export async function fetchShipSummary() {
+  const { data } = await api.get("/ships/summary");
+  return data;
+}
