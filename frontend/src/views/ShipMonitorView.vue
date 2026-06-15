@@ -551,6 +551,7 @@ interface ShipAnomalyItem {
   level: string;
   status: string;
   detectedAt: string;
+  disposalNote?: string;
 }
 
 interface IntrusionItem {
@@ -879,7 +880,7 @@ function updateMapMarkers() {
       ? "orange"
       : "blue";
 
-    const marker = L.circleMarker([pos.latitude, pos.longitude, {
+    const marker = L.circleMarker([pos.latitude, pos.longitude], {
       radius: 8,
       fillColor: iconColor,
       color: "#fff",
