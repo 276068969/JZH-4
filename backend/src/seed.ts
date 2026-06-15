@@ -9,6 +9,9 @@ export interface Account {
   password: string;
   role: Role;
   name: string;
+  position: string;
+  responsibleSeaAreas: string[];
+  dataScope: string;
 }
 
 export interface MonitoringPoint {
@@ -84,9 +87,36 @@ export interface EventRecord {
 }
 
 export const accounts: Account[] = [
-  { id: 1, username: "admin", password: "admin123", role: "admin", name: "系统管理员" },
-  { id: 2, username: "supervisor", password: "123456", role: "supervisor", name: "监管人员" },
-  { id: 3, username: "user", password: "123456", role: "user", name: "普通用户" }
+  {
+    id: 1,
+    username: "admin",
+    password: "admin123",
+    role: "admin",
+    name: "系统管理员",
+    position: "海洋监管局局长",
+    responsibleSeaAreas: ["全部海域"],
+    dataScope: "可查看全部海域的监测数据、告警信息和事件记录，拥有系统管理权限"
+  },
+  {
+    id: 2,
+    username: "supervisor",
+    password: "123456",
+    role: "supervisor",
+    name: "监管人员",
+    position: "海域监管科科员",
+    responsibleSeaAreas: ["东港近岸海域", "蓝湾工业岸线", "南礁保护区", "北湾养殖区"],
+    dataScope: "可查看所辖海域的监测数据、告警信息和事件记录，可处置告警和事件"
+  },
+  {
+    id: 3,
+    username: "user",
+    password: "123456",
+    role: "user",
+    name: "普通用户",
+    position: "观测站值班员",
+    responsibleSeaAreas: ["北湾养殖区"],
+    dataScope: "仅可查看北湾养殖区的监测数据，无告警和事件处置权限"
+  }
 ];
 
 export const monitoringPoints: MonitoringPoint[] = [

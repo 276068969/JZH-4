@@ -6,6 +6,9 @@ export interface UserProfile {
   username: string;
   role: "admin" | "supervisor" | "user";
   name: string;
+  position: string;
+  responsibleSeaAreas: string[];
+  dataScope: string;
 }
 
 export const useAuthStore = defineStore("auth", {

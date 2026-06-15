@@ -4,6 +4,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(128) NOT NULL,
   role VARCHAR(32) NOT NULL,
   name VARCHAR(64) NOT NULL,
+  position VARCHAR(128),
+  responsible_sea_areas TEXT[],
+  data_scope TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -68,10 +71,10 @@ CREATE TABLE IF NOT EXISTS event_records (
   resolved_at TIMESTAMP
 );
 
-INSERT INTO users (username, password_hash, role, name) VALUES
-  ('admin', 'admin123', 'admin', '系统管理员'),
-  ('supervisor', '123456', 'supervisor', '监管人员'),
-  ('user', '123456', 'user', '普通用户')
+INSERT INTO users (username, password_hash, role, name, position, responsible_sea_areas, data_scope) VALUES
+  ('admin', 'admin123', 'admin', '系统管理员', '海洋监管局局长', ARRAY['全部海域'], '可查看全部海域的监测数据、告警信息和事件记录，拥有系统管理权限'),
+  ('supervisor', '123456', 'supervisor', '监管人员', '海域监管科科员', ARRAY['东港近岸海域', '蓝湾工业岸线', '南礁保护区', '北湾养殖区'], '可查看所辖海域的监测数据、告警信息和事件记录，可处置告警和事件'),
+  ('user', '123456', 'user', '普通用户', '观测站值班员', ARRAY['北湾养殖区'], '仅可查看北湾养殖区的监测数据，无告警和事件处置权限')
 ON CONFLICT (username) DO NOTHING;
 
 INSERT INTO monitoring_points (name, sea_area, type, latitude, longitude, status, water_quality, wind_speed, temperature, updated_at) VALUES

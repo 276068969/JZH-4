@@ -123,7 +123,15 @@ app.post("/api/auth/login", (req, res) => {
   }
 
   const token = jwt.sign(
-    { id: account.id, username: account.username, role: account.role, name: account.name },
+    {
+      id: account.id,
+      username: account.username,
+      role: account.role,
+      name: account.name,
+      position: account.position,
+      responsibleSeaAreas: account.responsibleSeaAreas,
+      dataScope: account.dataScope
+    },
     jwtSecret,
     { expiresIn: "8h" }
   );
@@ -134,7 +142,10 @@ app.post("/api/auth/login", (req, res) => {
       id: account.id,
       username: account.username,
       role: account.role,
-      name: account.name
+      name: account.name,
+      position: account.position,
+      responsibleSeaAreas: account.responsibleSeaAreas,
+      dataScope: account.dataScope
     }
   });
 });
