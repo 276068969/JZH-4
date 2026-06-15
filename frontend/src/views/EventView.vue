@@ -5,25 +5,58 @@
       <el-button type="primary" @click="dialogVisible = true">上报事件</el-button>
     </h2>
     <el-table :data="events" stripe>
-      <el-table-column prop="id" label="编号" width="90" />
-      <el-table-column prop="title" label="事件标题" min-width="190" />
-      <el-table-column prop="category" label="类型" width="110" />
-      <el-table-column prop="seaArea" label="海域" min-width="140" />
-      <el-table-column prop="level" label="等级" width="90">
+      <el-table-column prop="id" label="编号" width="80" />
+      <el-table-column prop="title" label="事件标题" min-width="160" />
+      <el-table-column prop="category" label="类型" width="100" />
+      <el-table-column prop="seaArea" label="海域" min-width="120" />
+      <el-table-column prop="level" label="等级" width="80">
         <template #default="{ row }">
           <el-tag :type="levelType(row.level)">{{ levelLabel(row.level) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="status" label="状态" width="120">
+      <el-table-column prop="source" label="来源" width="100" />
+      <el-table-column prop="responsiblePerson" label="责任人" width="100">
         <template #default="{ row }">
-          <el-select v-model="row.status" size="small" @change="(value: string) => changeStatus(row.id, value)">
-            <el-option label="已上报" value="reported" />
-            <el-option label="处理中" value="processing" />
-            <el-option label="已办结" value="resolved" />
-          </el-select>
+          {{ row.responsiblePerson || '—' }}
         </template>
       </el-table-column>
-      <el-table-column prop="occurredAt" label="发生时间" width="160" />
+      <el-table-column prop="disposalNote" label="处置说明" min-width="160">
+        <template #default="{ row }">
+          {{ row.disposalNote || '—' }}
+        </template>
+      </el-table-column>
+      <el-table-column prop="status" label="状态" width="110">
+        <template #default="{ row }">
+          <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="occurredAt" label="发生时间" width="150" />
+      <el-table-column prop="resolvedAt" label="办结时间" width="150">
+        <template #default="{ row }">
+          {{ row.resolvedAt || '—' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="100" fixed="right">
+        <template #default="{ row }">
+          <el-button
+            v-if="row.status === 'reported'"
+            type="warning"
+            size="small"
+            @click="openDisposalDialog(row, 'processing')"
+          >
+            处理
+          </el-button>
+          <el-button
+            v-if="row.status === 'processing'"
+            type="success"
+            size="small"
+            @click="openDisposalDialog(row, 'resolved')"
+          >
+            办结
+          </el-button>
+          <span v-if="row.status === 'resolved'" class="text-muted">已闭环</span>
+        </template>
+      </el-table-column>
     </el-table>
 
     <el-dialog v-model="dialogVisible" title="上报事件" width="460px">
@@ -38,10 +71,39 @@
             <el-option label="高" value="high" />
           </el-select>
         </el-form-item>
+        <el-form-item label="来源">
+          <el-select v-model="form.source">
+            <el-option label="人工上报" value="人工上报" />
+            <el-option label="自动监测" value="自动监测" />
+            <el-option label="AIS 雷达" value="AIS 雷达" />
+            <el-option label="设备心跳" value="设备心跳" />
+            <el-option label="群众举报" value="群众举报" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submit">提交</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="disposalDialogVisible" :title="disposalDialogTitle" width="480px">
+      <el-form :model="disposalForm" label-width="86px">
+        <el-form-item label="责任人" required>
+          <el-input v-model="disposalForm.responsiblePerson" placeholder="请输入责任人" />
+        </el-form-item>
+        <el-form-item label="处置说明" :required="disposalTargetStatus === 'resolved'">
+          <el-input
+            v-model="disposalForm.disposalNote"
+            type="textarea"
+            :rows="3"
+            placeholder="请输入处置说明"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="disposalDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitDisposal">确认</el-button>
       </template>
     </el-dialog>
   </section>
@@ -59,7 +121,13 @@ interface EventRecord {
   seaArea: string;
   level: string;
   status: string;
+  reporter: string;
+  assignee: string;
+  source: string;
+  disposalNote: string;
+  responsiblePerson: string;
   occurredAt: string;
+  resolvedAt?: string;
 }
 
 const events = ref<EventRecord[]>([]);
@@ -68,7 +136,16 @@ const form = reactive({
   title: "",
   category: "污染预警",
   seaArea: "",
-  level: "medium"
+  level: "medium",
+  source: "人工上报"
+});
+
+const disposalDialogVisible = ref(false);
+const disposalTargetStatus = ref<"processing" | "resolved">("processing");
+const disposalTargetEvent = ref<EventRecord | null>(null);
+const disposalForm = reactive({
+  responsiblePerson: "",
+  disposalNote: ""
 });
 
 function levelLabel(level: string) {
@@ -77,6 +154,24 @@ function levelLabel(level: string) {
 
 function levelType(level: string) {
   return level === "high" ? "danger" : level === "medium" ? "warning" : "info";
+}
+
+function statusLabel(status: string) {
+  return { reported: "已上报", processing: "处理中", resolved: "已办结" }[status] ?? status;
+}
+
+function statusType(status: string) {
+  return status === "resolved" ? "success" : status === "processing" ? "warning" : "info";
+}
+
+const disposalDialogTitle = ref("");
+function openDisposalDialog(event: EventRecord, targetStatus: "processing" | "resolved") {
+  disposalTargetEvent.value = event;
+  disposalTargetStatus.value = targetStatus;
+  disposalDialogTitle.value = targetStatus === "processing" ? "开始处理" : "事件办结";
+  disposalForm.responsiblePerson = event.responsiblePerson || "";
+  disposalForm.disposalNote = event.disposalNote || "";
+  disposalDialogVisible.value = true;
 }
 
 async function loadEvents() {
@@ -90,10 +185,41 @@ async function submit() {
   await loadEvents();
 }
 
-async function changeStatus(id: number, status: string) {
-  await updateEventStatus(id, status);
-  ElMessage.success("状态已更新");
+async function submitDisposal() {
+  if (!disposalForm.responsiblePerson.trim()) {
+    ElMessage.warning("请填写责任人");
+    return;
+  }
+  if (disposalTargetStatus.value === "resolved" && !disposalForm.disposalNote.trim()) {
+    ElMessage.warning("办结时必须填写处置说明");
+    return;
+  }
+
+  const payload: Record<string, unknown> = {
+    status: disposalTargetStatus.value,
+    responsiblePerson: disposalForm.responsiblePerson
+  };
+  if (disposalForm.disposalNote.trim()) {
+    payload.disposalNote = disposalForm.disposalNote;
+  }
+
+  try {
+    await updateEventStatus(disposalTargetEvent.value!.id, payload);
+    ElMessage.success("状态已更新");
+    disposalDialogVisible.value = false;
+    await loadEvents();
+  } catch (err: unknown) {
+    const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "更新失败";
+    ElMessage.error(message);
+  }
 }
 
 onMounted(loadEvents);
 </script>
+
+<style scoped>
+.text-muted {
+  color: #909399;
+  font-size: 13px;
+}
+</style>

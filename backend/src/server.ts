@@ -34,7 +34,8 @@ const eventSchema = z.object({
   category: z.string().min(2),
   seaArea: z.string().min(2),
   level: z.enum(["low", "medium", "high"]).default("medium"),
-  reporter: z.string().min(2).default("人工上报")
+  reporter: z.string().min(2).default("人工上报"),
+  source: z.enum(["人工上报", "自动监测", "AIS 雷达", "设备心跳", "群众举报"]).default("人工上报")
 });
 
 const alertConditionSchema = z.object({
@@ -301,6 +302,9 @@ app.post("/api/events", requireAuth, (req, res) => {
     status: "reported",
     reporter: parsed.data.reporter,
     assignee: "未分派",
+    source: parsed.data.source,
+    disposalNote: "",
+    responsiblePerson: "",
     occurredAt: new Date().toISOString().slice(0, 16).replace("T", " ")
   };
 
@@ -310,7 +314,11 @@ app.post("/api/events", requireAuth, (req, res) => {
 
 app.patch("/api/events/:id/status", requireAuth, (req, res) => {
   const id = Number(req.params.id);
-  const statusSchema = z.object({ status: z.enum(["reported", "processing", "resolved"]) });
+  const statusSchema = z.object({
+    status: z.enum(["reported", "processing", "resolved"]),
+    disposalNote: z.string().optional(),
+    responsiblePerson: z.string().optional()
+  });
   const parsed = statusSchema.safeParse(req.body);
   const event = events.find((item) => item.id === id);
 
@@ -324,7 +332,36 @@ app.patch("/api/events/:id/status", requireAuth, (req, res) => {
     return;
   }
 
-  event.status = parsed.data.status;
+  const { status, disposalNote, responsiblePerson } = parsed.data;
+
+  if (status === "processing") {
+    if (!responsiblePerson || responsiblePerson.trim() === "") {
+      res.status(400).json({ message: "处理中状态必须填写责任人" });
+      return;
+    }
+    event.responsiblePerson = responsiblePerson;
+    if (disposalNote !== undefined) {
+      event.disposalNote = disposalNote;
+    }
+  }
+
+  if (status === "resolved") {
+    if (!disposalNote || disposalNote.trim() === "") {
+      res.status(400).json({ message: "办结状态必须填写处置说明" });
+      return;
+    }
+    if (!event.responsiblePerson && (!responsiblePerson || responsiblePerson.trim() === "")) {
+      res.status(400).json({ message: "办结状态必须指定责任人" });
+      return;
+    }
+    event.disposalNote = disposalNote;
+    if (responsiblePerson !== undefined) {
+      event.responsiblePerson = responsiblePerson;
+    }
+    event.resolvedAt = new Date().toISOString().slice(0, 16).replace("T", " ");
+  }
+
+  event.status = status;
   res.json(event);
 });
 

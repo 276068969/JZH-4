@@ -61,7 +61,11 @@ CREATE TABLE IF NOT EXISTS event_records (
   status VARCHAR(32) NOT NULL,
   reporter VARCHAR(64) NOT NULL,
   assignee VARCHAR(64) NOT NULL,
-  occurred_at TIMESTAMP NOT NULL
+  source VARCHAR(64) NOT NULL DEFAULT '人工上报',
+  disposal_note TEXT DEFAULT '',
+  responsible_person VARCHAR(64) DEFAULT '',
+  occurred_at TIMESTAMP NOT NULL,
+  resolved_at TIMESTAMP
 );
 
 INSERT INTO users (username, password_hash, role, name) VALUES
@@ -82,7 +86,7 @@ INSERT INTO alert_rules (name, target, condition_text, condition_metric, conditi
   ('风速超限告警', '气象', '风速 > 10m/s', 'wind_speed', 'gt', '10', 'm/s', 'low', TRUE),
   ('设备预警状态', '设备', '设备状态 = warning', 'status', 'eq', 'warning', '', 'medium', TRUE);
 
-INSERT INTO event_records (title, category, sea_area, level, status, reporter, assignee, occurred_at) VALUES
-  ('蓝湾排口疑似违法排放', '违法排放', '蓝湾工业岸线', 'high', 'processing', '水质自动监测', '监管人员', '2026-06-11 08:42:00'),
-  ('南礁保护区异常船舶停留', '异常船舶', '南礁保护区', 'medium', 'reported', 'AIS 雷达', '未分派', '2026-06-11 08:55:00'),
-  ('北湾气象站离线', '设备告警', '北湾养殖区', 'low', 'resolved', '设备心跳', '运维值班', '2026-06-10 22:15:00');
+INSERT INTO event_records (title, category, sea_area, level, status, reporter, assignee, source, disposal_note, responsible_person, occurred_at, resolved_at) VALUES
+  ('蓝湾排口疑似违法排放', '违法排放', '蓝湾工业岸线', 'high', 'processing', '水质自动监测', '监管人员', '自动监测', '已派遣执法人员前往现场取样', '张伟', '2026-06-11 08:42:00', NULL),
+  ('南礁保护区异常船舶停留', '异常船舶', '南礁保护区', 'medium', 'reported', 'AIS 雷达', '未分派', 'AIS 雷达', '', '', '2026-06-11 08:55:00', NULL),
+  ('北湾气象站离线', '设备告警', '北湾养殖区', 'low', 'resolved', '设备心跳', '运维值班', '设备心跳', '设备重启后恢复正常运行', '李明', '2026-06-10 22:15:00', '2026-06-11 06:30:00');

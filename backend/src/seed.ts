@@ -67,7 +67,11 @@ export interface EventRecord {
   status: "reported" | "processing" | "resolved";
   reporter: string;
   assignee: string;
+  source: string;
+  disposalNote: string;
+  responsiblePerson: string;
   occurredAt: string;
+  resolvedAt?: string;
 }
 
 export const accounts: Account[] = [
@@ -202,6 +206,9 @@ export const events: EventRecord[] = [
     status: "processing",
     reporter: "水质自动监测",
     assignee: "监管人员",
+    source: "自动监测",
+    disposalNote: "已派遣执法人员前往现场取样",
+    responsiblePerson: "张伟",
     occurredAt: "2026-06-11 08:42"
   },
   {
@@ -213,6 +220,9 @@ export const events: EventRecord[] = [
     status: "reported",
     reporter: "AIS 雷达",
     assignee: "未分派",
+    source: "AIS 雷达",
+    disposalNote: "",
+    responsiblePerson: "",
     occurredAt: "2026-06-11 08:55"
   },
   {
@@ -224,6 +234,10 @@ export const events: EventRecord[] = [
     status: "resolved",
     reporter: "设备心跳",
     assignee: "运维值班",
-    occurredAt: "2026-06-10 22:15"
+    source: "设备心跳",
+    disposalNote: "设备重启后恢复正常运行",
+    responsiblePerson: "李明",
+    occurredAt: "2026-06-10 22:15",
+    resolvedAt: "2026-06-11 06:30"
   }
 ];

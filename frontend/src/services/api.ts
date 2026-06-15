@@ -38,8 +38,8 @@ export async function createEvent(payload: Record<string, unknown>) {
   return data;
 }
 
-export async function updateEventStatus(id: number, status: string) {
-  const { data } = await api.patch(`/events/${id}/status`, { status });
+export async function updateEventStatus(id: number, payload: Record<string, unknown>) {
+  const { data } = await api.patch(`/events/${id}/status`, payload);
   return data;
 }
 
