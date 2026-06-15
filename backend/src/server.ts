@@ -10,6 +10,7 @@ import {
   alertRules,
   events,
   monitoringPoints,
+  seaAreas,
   type AlertResult,
   type AlertRule,
   type EventRecord
@@ -144,6 +145,23 @@ app.get("/api/dashboard/metrics", requireAuth, (_req, res) => {
 
 app.get("/api/monitoring-points", requireAuth, (_req, res) => {
   res.json(monitoringPoints);
+});
+
+app.get("/api/sea-areas", requireAuth, (_req, res) => {
+  const result = seaAreas.map((area) => {
+    const points = monitoringPoints.filter((p) => area.monitoringPointIds.includes(p.id));
+    return {
+      ...area,
+      monitoringPoints: points.map((p) => ({
+        id: p.id,
+        name: p.name,
+        type: p.type,
+        status: p.status,
+        waterQuality: p.waterQuality
+      }))
+    };
+  });
+  res.json(result);
 });
 
 app.get("/api/alert-rules", requireAuth, (_req, res) => {

@@ -58,6 +58,15 @@ export interface AlertResult {
   resolvedAt?: string;
 }
 
+export interface SeaArea {
+  id: number;
+  name: string;
+  usageType: string;
+  jurisdiction: string;
+  keyRisks: string[];
+  monitoringPointIds: number[];
+}
+
 export interface EventRecord {
   id: number;
   title: string;
@@ -195,6 +204,73 @@ export const alertRules: AlertRule[] = [
 ];
 
 export const alertResults: AlertResult[] = [];
+
+export const seaAreas: SeaArea[] = [
+  {
+    id: 1,
+    name: "东港近岸海域",
+    usageType: "生态保护",
+    jurisdiction: "东港市海洋局",
+    keyRisks: ["赤潮频发", "近岸水质波动"],
+    monitoringPointIds: [1]
+  },
+  {
+    id: 2,
+    name: "蓝湾工业岸线",
+    usageType: "工业排放监管",
+    jurisdiction: "蓝湾经济开发区管委会",
+    keyRisks: ["工业废水排放", "重金属超标"],
+    monitoringPointIds: [2]
+  },
+  {
+    id: 3,
+    name: "南礁保护区",
+    usageType: "生态保护",
+    jurisdiction: "南礁海洋自然保护区管理处",
+    keyRisks: ["非法捕捞", "船舶违规停泊"],
+    monitoringPointIds: [3]
+  },
+  {
+    id: 4,
+    name: "北湾养殖区",
+    usageType: "渔业养殖",
+    jurisdiction: "北湾区农业农村局",
+    keyRisks: ["养殖密度过高", "水温异常"],
+    monitoringPointIds: [4]
+  },
+  {
+    id: 5,
+    name: "西渡航运通道",
+    usageType: "航运管理",
+    jurisdiction: "西渡海事局",
+    keyRisks: ["船舶碰撞", "溢油事故"],
+    monitoringPointIds: []
+  },
+  {
+    id: 6,
+    name: "中央岛礁海域",
+    usageType: "生态保护",
+    jurisdiction: "中央岛礁管理站",
+    keyRisks: ["珊瑚白化", "游客违规活动"],
+    monitoringPointIds: []
+  },
+  {
+    id: 7,
+    name: "南湾排污区",
+    usageType: "工业排放监管",
+    jurisdiction: "南湾环保局",
+    keyRisks: ["污水排放超标", "底泥污染"],
+    monitoringPointIds: []
+  },
+  {
+    id: 8,
+    name: "东洲浅滩海域",
+    usageType: "渔业养殖",
+    jurisdiction: "东洲县海洋渔业局",
+    keyRisks: ["潮汐变化", "养殖病害"],
+    monitoringPointIds: []
+  }
+];
 
 export const events: EventRecord[] = [
   {

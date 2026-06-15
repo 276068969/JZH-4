@@ -92,3 +92,8 @@ export async function fetchUsers() {
   const { data } = await api.get("/admin/users");
   return data;
 }
+
+export async function fetchSeaAreas() {
+  const { data } = await api.get("/sea-areas");
+  return data;
+}
