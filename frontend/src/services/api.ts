@@ -48,6 +48,46 @@ export async function fetchAlertRules() {
   return data;
 }
 
+export async function createAlertRule(payload: Record<string, unknown>) {
+  const { data } = await api.post("/alert-rules", payload);
+  return data;
+}
+
+export async function updateAlertRule(id: number, payload: Record<string, unknown>) {
+  const { data } = await api.patch(`/alert-rules/${id}`, payload);
+  return data;
+}
+
+export async function toggleAlertRule(id: number) {
+  const { data } = await api.patch(`/alert-rules/${id}/toggle`);
+  return data;
+}
+
+export async function deleteAlertRule(id: number) {
+  const { data } = await api.delete(`/alert-rules/${id}`);
+  return data;
+}
+
+export async function fetchAlerts(params?: Record<string, string>) {
+  const { data } = await api.get("/alerts", { params });
+  return data;
+}
+
+export async function fetchAlertsSummary() {
+  const { data } = await api.get("/alerts/summary");
+  return data;
+}
+
+export async function evaluateAlerts() {
+  const { data } = await api.post("/alerts/evaluate");
+  return data;
+}
+
+export async function updateAlertStatus(id: number, status: string) {
+  const { data } = await api.patch(`/alerts/${id}/status`, { status });
+  return data;
+}
+
 export async function fetchUsers() {
   const { data } = await api.get("/admin/users");
   return data;

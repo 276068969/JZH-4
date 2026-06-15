@@ -1,5 +1,8 @@
 export type Role = "admin" | "supervisor" | "user";
 
+export type AlertMetric = "water_quality" | "wind_speed" | "status" | "temperature";
+export type AlertOperator = "gt" | "gte" | "lt" | "lte" | "eq" | "neq" | "in";
+
 export interface Account {
   id: number;
   username: string;
@@ -22,13 +25,37 @@ export interface MonitoringPoint {
   updatedAt: string;
 }
 
+export interface AlertCondition {
+  metric: AlertMetric;
+  operator: AlertOperator;
+  threshold: number | string | string[];
+  unit?: string;
+}
+
 export interface AlertRule {
   id: number;
   name: string;
   target: string;
   condition: string;
+  conditionStruct?: AlertCondition;
   level: "low" | "medium" | "high";
   enabled: boolean;
+}
+
+export interface AlertResult {
+  id: number;
+  ruleId: number;
+  ruleName: string;
+  pointId: number;
+  pointName: string;
+  seaArea: string;
+  level: "low" | "medium" | "high";
+  message: string;
+  metricValue: string | number;
+  status: "active" | "acknowledged" | "resolved";
+  triggeredAt: string;
+  acknowledgedAt?: string;
+  resolvedAt?: string;
 }
 
 export interface EventRecord {
@@ -105,11 +132,65 @@ export const monitoringPoints: MonitoringPoint[] = [
 ];
 
 export const alertRules: AlertRule[] = [
-  { id: 1, name: "氨氮浓度超限", target: "水质", condition: "NH3-N > 1.0mg/L", level: "high", enabled: true },
-  { id: 2, name: "保护区船舶闯入", target: "船舶", condition: "AIS in protected area", level: "high", enabled: true },
-  { id: 3, name: "监测点离线", target: "设备", condition: "offline > 15min", level: "medium", enabled: true },
-  { id: 4, name: "风速突增", target: "气象", condition: "wind_speed > 12m/s", level: "low", enabled: false }
+  {
+    id: 1,
+    name: "水质超标告警",
+    target: "水质",
+    condition: "水质等级 ≥ IV 类",
+    conditionStruct: {
+      metric: "water_quality",
+      operator: "in",
+      threshold: ["IV 类", "V 类", "劣 V 类"],
+      unit: ""
+    },
+    level: "high",
+    enabled: true
+  },
+  {
+    id: 2,
+    name: "监测点离线告警",
+    target: "设备",
+    condition: "设备状态 = offline",
+    conditionStruct: {
+      metric: "status",
+      operator: "eq",
+      threshold: "offline",
+      unit: ""
+    },
+    level: "medium",
+    enabled: true
+  },
+  {
+    id: 3,
+    name: "风速超限告警",
+    target: "气象",
+    condition: "风速 > 10m/s",
+    conditionStruct: {
+      metric: "wind_speed",
+      operator: "gt",
+      threshold: 10,
+      unit: "m/s"
+    },
+    level: "low",
+    enabled: true
+  },
+  {
+    id: 4,
+    name: "设备预警状态",
+    target: "设备",
+    condition: "设备状态 = warning",
+    conditionStruct: {
+      metric: "status",
+      operator: "eq",
+      threshold: "warning",
+      unit: ""
+    },
+    level: "medium",
+    enabled: true
+  }
 ];
+
+export const alertResults: AlertResult[] = [];
 
 export const events: EventRecord[] = [
   {

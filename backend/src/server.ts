@@ -3,7 +3,17 @@ import dotenv from "dotenv";
 import express from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
-import { accounts, alertRules, events, monitoringPoints, type EventRecord } from "./seed.js";
+import { evaluateAllRules } from "./alertEngine.js";
+import {
+  accounts,
+  alertResults,
+  alertRules,
+  events,
+  monitoringPoints,
+  type AlertResult,
+  type AlertRule,
+  type EventRecord
+} from "./seed.js";
 
 dotenv.config();
 
@@ -27,10 +37,27 @@ const eventSchema = z.object({
   reporter: z.string().min(2).default("人工上报")
 });
 
+const alertConditionSchema = z.object({
+  metric: z.enum(["water_quality", "wind_speed", "status", "temperature"]),
+  operator: z.enum(["gt", "gte", "lt", "lte", "eq", "neq", "in"]),
+  threshold: z.union([z.number(), z.string(), z.array(z.string())]),
+  unit: z.string().optional()
+});
+
+const alertRuleSchema = z.object({
+  name: z.string().min(2),
+  target: z.string().min(2),
+  condition: z.string().min(2),
+  conditionStruct: alertConditionSchema.optional(),
+  level: z.enum(["low", "medium", "high"]).default("medium"),
+  enabled: z.boolean().default(true)
+});
+
 function buildMetrics() {
   const warningPoints = monitoringPoints.filter((point) => point.status === "warning").length;
   const offlinePoints = monitoringPoints.filter((point) => point.status === "offline").length;
   const openEvents = events.filter((event) => event.status !== "resolved").length;
+  const activeAlerts = alertResults.filter((r) => r.status === "active").length;
 
   return {
     seaAreas: 8,
@@ -39,9 +66,22 @@ function buildMetrics() {
     offlinePoints,
     shipsOnline: 126,
     openEvents,
+    activeAlerts,
     waterQualityRate: 91.6
   };
 }
+
+function runAlertEvaluation() {
+  const newAlerts = evaluateAllRules(alertRules, monitoringPoints, alertResults);
+  let nextId = alertResults.length > 0 ? Math.max(...alertResults.map((r) => r.id)) + 1 : 1;
+  for (const alert of newAlerts) {
+    alert.id = nextId++;
+    alertResults.unshift(alert);
+  }
+  return newAlerts;
+}
+
+runAlertEvaluation();
 
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
@@ -107,6 +147,138 @@ app.get("/api/monitoring-points", requireAuth, (_req, res) => {
 
 app.get("/api/alert-rules", requireAuth, (_req, res) => {
   res.json(alertRules);
+});
+
+app.post("/api/alert-rules", requireAuth, (req, res) => {
+  const parsed = alertRuleSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "告警规则信息不完整" });
+    return;
+  }
+
+  const rule: AlertRule = {
+    id: Math.max(...alertRules.map((r) => r.id)) + 1,
+    name: parsed.data.name,
+    target: parsed.data.target,
+    condition: parsed.data.condition,
+    conditionStruct: parsed.data.conditionStruct,
+    level: parsed.data.level,
+    enabled: parsed.data.enabled
+  };
+
+  alertRules.push(rule);
+  res.status(201).json(rule);
+});
+
+app.patch("/api/alert-rules/:id", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const rule = alertRules.find((r) => r.id === id);
+
+  if (!rule) {
+    res.status(404).json({ message: "告警规则不存在" });
+    return;
+  }
+
+  const parsed = alertRuleSchema.partial().safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "参数格式错误" });
+    return;
+  }
+
+  Object.assign(rule, parsed.data);
+  res.json(rule);
+});
+
+app.patch("/api/alert-rules/:id/toggle", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const rule = alertRules.find((r) => r.id === id);
+
+  if (!rule) {
+    res.status(404).json({ message: "告警规则不存在" });
+    return;
+  }
+
+  rule.enabled = !rule.enabled;
+  res.json(rule);
+});
+
+app.delete("/api/alert-rules/:id", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const index = alertRules.findIndex((r) => r.id === id);
+
+  if (index === -1) {
+    res.status(404).json({ message: "告警规则不存在" });
+    return;
+  }
+
+  alertRules.splice(index, 1);
+  res.json({ message: "已删除" });
+});
+
+app.get("/api/alerts", requireAuth, (req, res) => {
+  const status = req.query.status as string | undefined;
+  const level = req.query.level as string | undefined;
+
+  let filtered = [...alertResults];
+
+  if (status) {
+    filtered = filtered.filter((a) => a.status === status);
+  }
+  if (level) {
+    filtered = filtered.filter((a) => a.level === level);
+  }
+
+  res.json(filtered);
+});
+
+app.get("/api/alerts/summary", requireAuth, (_req, res) => {
+  const summary = {
+    total: alertResults.length,
+    active: alertResults.filter((a) => a.status === "active").length,
+    acknowledged: alertResults.filter((a) => a.status === "acknowledged").length,
+    resolved: alertResults.filter((a) => a.status === "resolved").length,
+    high: alertResults.filter((a) => a.level === "high" && a.status === "active").length,
+    medium: alertResults.filter((a) => a.level === "medium" && a.status === "active").length,
+    low: alertResults.filter((a) => a.level === "low" && a.status === "active").length
+  };
+  res.json(summary);
+});
+
+app.post("/api/alerts/evaluate", requireAuth, (_req, res) => {
+  const newAlerts = runAlertEvaluation();
+  res.json({
+    evaluated: true,
+    newCount: newAlerts.length,
+    newAlerts
+  });
+});
+
+app.patch("/api/alerts/:id/status", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const statusSchema = z.object({ status: z.enum(["active", "acknowledged", "resolved"]) });
+  const parsed = statusSchema.safeParse(req.body);
+  const alert = alertResults.find((a) => a.id === id);
+
+  if (!alert) {
+    res.status(404).json({ message: "告警不存在" });
+    return;
+  }
+
+  if (!parsed.success) {
+    res.status(400).json({ message: "状态值无效" });
+    return;
+  }
+
+  alert.status = parsed.data.status;
+  const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+  if (parsed.data.status === "acknowledged" && !alert.acknowledgedAt) {
+    alert.acknowledgedAt = now;
+  }
+  if (parsed.data.status === "resolved") {
+    alert.resolvedAt = now;
+  }
+
+  res.json(alert);
 });
 
 app.get("/api/events", requireAuth, (_req, res) => {
