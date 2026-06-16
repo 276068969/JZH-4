@@ -44,11 +44,18 @@ function roleLabel(role: string) {
   return { admin: "管理员", supervisor: "监管人员", user: "普通用户" }[role] ?? role;
 }
 
+function notifyRulesChanged() {
+  const key = "ocean_alert_rules_changed";
+  localStorage.setItem(key, String(Date.now()));
+  localStorage.removeItem(key);
+}
+
 async function onRuleToggle(row: any) {
   row._loading = true;
   try {
     const updated = await toggleAlertRule(row.id);
     row.enabled = updated.enabled;
+    notifyRulesChanged();
     ElMessage.success(`规则已${updated.enabled ? "启用" : "停用"}，监管大屏数据将同步更新`);
   } catch (err: unknown) {
     row.enabled = !row.enabled;

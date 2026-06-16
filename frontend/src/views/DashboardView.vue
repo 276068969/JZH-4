@@ -3,7 +3,7 @@
     <div class="metric-grid">
       <article v-for="item in cards" :key="item.label" class="metric-card">
         <span>{{ item.label }}</span>
-        <strong>{{ item.value }}</strong>
+        <strong :style="{ color: item.color ?? '#17324d' }">{{ item.value }}</strong>
       </article>
     </div>
     <div class="content-grid">
@@ -49,6 +49,14 @@
               <el-tag :type="statusType(row.status)" size="small" effect="dark">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="活跃告警" width="90">
+            <template #default="{ row }">
+              <el-tag v-if="pointAlertCount(row.id) > 0" type="danger" size="small" effect="plain">
+                {{ pointAlertCount(row.id) }}
+              </el-tag>
+              <span v-else class="text-muted">—</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="updatedAt" label="更新时间" width="140">
             <template #default="{ row }">
               <span class="update-time">{{ row.updatedAt }}</span>
@@ -57,14 +65,47 @@
         </el-table>
       </div>
     </div>
+    <div class="panel" style="margin-top: 16px">
+      <h2 class="panel-title">
+        最新告警
+        <el-tag size="small" type="danger" effect="plain">{{ activeAlerts.length }} 条活跃</el-tag>
+        <el-button size="small" style="margin-left: auto" @click="loadAllData">刷新</el-button>
+      </h2>
+      <el-table :data="activeAlerts.slice(0, 8)" size="small" stripe>
+        <el-table-column prop="id" label="编号" width="70" />
+        <el-table-column prop="ruleName" label="规则名称" min-width="140" />
+        <el-table-column prop="pointName" label="监测点" width="130" />
+        <el-table-column prop="seaArea" label="海域" width="120" />
+        <el-table-column prop="level" label="等级" width="70">
+          <template #default="{ row }">
+            <el-tag :type="levelType(row.level)" size="small">{{ levelLabel(row.level) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="message" label="告警详情" min-width="220" />
+        <el-table-column prop="status" label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="alertStatusType(row.status)" size="small" effect="dark">
+              {{ alertStatusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="triggeredAt" label="触发时间" width="140" />
+      </el-table>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import * as echarts from "echarts";
 import L from "leaflet";
-import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { fetchMetrics, fetchMonitoringPoints } from "../services/api";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import {
+  fetchMetrics,
+  fetchMonitoringPoints,
+  fetchAlerts,
+  fetchAlertsSummary,
+  fetchEvents
+} from "../services/api";
 
 interface Point {
   id: number;
@@ -78,21 +119,77 @@ interface Point {
   updatedAt: string;
 }
 
+interface AlertRecord {
+  id: number;
+  ruleId: number;
+  ruleName: string;
+  pointId: number;
+  pointName: string;
+  seaArea: string;
+  level: string;
+  message: string;
+  metricValue: string | number;
+  status: string;
+  triggeredAt: string;
+}
+
+interface AlertSummary {
+  total: number;
+  active: number;
+  acknowledged: number;
+  resolved: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+interface EventRecord {
+  id: number;
+  title: string;
+  category: string;
+  seaArea: string;
+  level: string;
+  status: string;
+  occurredAt: string;
+}
+
 const metrics = ref<Record<string, number>>({});
 const points = ref<Point[]>([]);
+const activeAlerts = ref<AlertRecord[]>([]);
+const alertSummary = ref<AlertSummary>({
+  total: 0, active: 0, acknowledged: 0, resolved: 0,
+  high: 0, medium: 0, low: 0
+});
+const events = ref<EventRecord[]>([]);
 const chartRef = ref<HTMLDivElement | null>(null);
 const activeFilter = ref<string>("all");
 const selectedPointId = ref<number | null>(null);
 
 let mapInstance: L.Map | null = null;
 const markerMap = new Map<number, L.CircleMarker>();
+let chartInstance: echarts.ECharts | null = null;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 const cards = computed(() => [
   { label: "监管海域", value: metrics.value.seaAreas ?? 0 },
   { label: "监测点位", value: metrics.value.monitoringPoints ?? 0 },
+  { label: "预警点位", value: metrics.value.warningPoints ?? 0, color: "#d97706" },
   { label: "在线船舶", value: metrics.value.shipsOnline ?? 0 },
+  { label: "活跃告警", value: alertSummary.value.active ?? 0, color: "#dc2626" },
   { label: "待处置事件", value: metrics.value.openEvents ?? 0 }
 ]);
+
+const pointAlertCountMap = computed(() => {
+  const map = new Map<number, number>();
+  for (const a of activeAlerts.value) {
+    map.set(a.pointId, (map.get(a.pointId) ?? 0) + 1);
+  }
+  return map;
+});
+
+function pointAlertCount(pointId: number): number {
+  return pointAlertCountMap.value.get(pointId) ?? 0;
+}
 
 const statusCounts = computed(() => {
   const all = points.value.length;
@@ -122,6 +219,22 @@ function statusType(status: string) {
   return status === "normal" ? "success" : status === "warning" ? "warning" : "info";
 }
 
+function levelLabel(level: string) {
+  return { low: "低", medium: "中", high: "高" }[level] ?? level;
+}
+
+function levelType(level: string) {
+  return level === "high" ? "danger" : level === "medium" ? "warning" : "info";
+}
+
+function alertStatusLabel(status: string) {
+  return { active: "活跃", acknowledged: "已确认", resolved: "已解决" }[status] ?? status;
+}
+
+function alertStatusType(status: string) {
+  return status === "active" ? "danger" : status === "acknowledged" ? "warning" : "success";
+}
+
 function qualityClass(quality: string) {
   if (quality.includes("I") && !quality.includes("V") && !quality.includes("IV"))
     return "quality-excellent";
@@ -147,21 +260,26 @@ function renderMap() {
 
   points.value.forEach((point) => {
     const isWarning = point.status === "warning";
-    const color = statusColor(point.status);
+    const hasAlert = pointAlertCount(point.id) > 0;
+    const color = hasAlert ? "#dc2626" : statusColor(point.status);
 
     const marker = L.circleMarker([point.latitude, point.longitude], {
-      radius: isWarning ? 10 : 8,
+      radius: hasAlert ? 12 : isWarning ? 10 : 8,
       color,
       fillColor: color,
       fillOpacity: 0.85,
-      weight: 2
+      weight: hasAlert ? 3 : 2
     }).addTo(mapInstance!);
+
+    const alertInfo = hasAlert
+      ? `<br/><span style="color:#dc2626;font-weight:600">${pointAlertCount(point.id)} 条活跃告警</span>`
+      : "";
 
     marker.bindPopup(
       `<div style="min-width:160px">
         <strong>${point.name}</strong><br/>
         <span style="color:${color}">${statusLabel(point.status)}</span> · ${point.waterQuality}<br/>
-        ${point.type} · ${point.updatedAt}
+        ${point.type} · ${point.updatedAt}${alertInfo}
       </div>`
     );
 
@@ -170,6 +288,37 @@ function renderMap() {
     });
 
     markerMap.set(point.id, marker);
+  });
+}
+
+function syncMapMarkers() {
+  markerMap.forEach((marker, id) => {
+    const point = points.value.find((p) => p.id === id);
+    if (!point) return;
+    const hasAlert = pointAlertCount(id) > 0;
+    const isWarning = point.status === "warning";
+    const color = hasAlert ? "#dc2626" : statusColor(point.status);
+    const isSelected = id === selectedPointId.value;
+    marker.setStyle({
+      radius: isSelected ? 13 : hasAlert ? 12 : isWarning ? 10 : 8,
+      weight: isSelected ? 4 : hasAlert ? 3 : 2,
+      color: isSelected ? "#fff" : color,
+      fillColor: color,
+      fillOpacity: isSelected ? 1 : 0.85
+    });
+
+    const alertInfo = hasAlert
+      ? `<br/><span style="color:#dc2626;font-weight:600">${pointAlertCount(id)} 条活跃告警</span>`
+      : "";
+    marker.setPopupContent(
+      `<div style="min-width:160px">
+        <strong>${point.name}</strong><br/>
+        <span style="color:${color}">${statusLabel(point.status)}</span> · ${point.waterQuality}<br/>
+        ${point.type} · ${point.updatedAt}${alertInfo}
+      </div>`
+    );
+
+    if (isSelected) marker.bringToFront();
   });
 }
 
@@ -185,22 +334,7 @@ function syncMarkerVisibility() {
 }
 
 function highlightSelectedMarker() {
-  markerMap.forEach((marker, id) => {
-    const isSelected = id === selectedPointId.value;
-    const point = points.value.find((p) => p.id === id);
-    if (!point) return;
-    const color = statusColor(point.status);
-    marker.setStyle({
-      radius: isSelected ? 13 : point.status === "warning" ? 10 : 8,
-      weight: isSelected ? 4 : 2,
-      color: isSelected ? "#fff" : color,
-      fillColor: color,
-      fillOpacity: isSelected ? 1 : 0.85
-    });
-    if (isSelected) {
-      marker.bringToFront();
-    }
-  });
+  syncMapMarkers();
 }
 
 function onRowClick(row: Point) {
@@ -212,19 +346,80 @@ function onRowClick(row: Point) {
   }
 }
 
+function buildTrendSeries() {
+  const alertsByDate = new Map<string, number>();
+  const eventsByDate = new Map<string, number>();
+
+  for (const a of activeAlerts.value) {
+    const day = a.triggeredAt.slice(0, 10);
+    alertsByDate.set(day, (alertsByDate.get(day) ?? 0) + 1);
+  }
+
+  for (const e of events.value) {
+    const day = e.occurredAt.slice(0, 10);
+    eventsByDate.set(day, (eventsByDate.get(day) ?? 0) + 1);
+  }
+
+  const days: string[] = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+
+  const alertTrend = days.map((d) => alertsByDate.get(d) ?? 0);
+  const eventTrend = days.map((d) => eventsByDate.get(d) ?? 0);
+  const labels = days.map((d) => d.slice(5));
+
+  return { labels, alertTrend, eventTrend };
+}
+
 function renderChart() {
   if (!chartRef.value) return;
-  const chart = echarts.init(chartRef.value);
-  chart.setOption({
+  if (!chartInstance) {
+    chartInstance = echarts.init(chartRef.value);
+  }
+  const { labels, alertTrend, eventTrend } = buildTrendSeries();
+  chartInstance.setOption({
     tooltip: { trigger: "axis" },
-    grid: { left: 36, right: 16, top: 24, bottom: 28 },
-    xAxis: { type: "category", data: ["06-06", "06-07", "06-08", "06-09", "06-10", "06-11"] },
-    yAxis: { type: "value" },
+    legend: { data: ["告警", "事件"], top: 0, right: 16, textStyle: { fontSize: 12 } },
+    grid: { left: 36, right: 16, top: 32, bottom: 28 },
+    xAxis: { type: "category", data: labels },
+    yAxis: { type: "value", minInterval: 1 },
     series: [
-      { name: "告警", type: "line", smooth: true, data: [4, 5, 3, 7, 6, 8], color: "#d97706" },
-      { name: "事件", type: "bar", data: [2, 3, 2, 4, 3, 5], color: "#0f766e" }
+      {
+        name: "告警",
+        type: "line",
+        smooth: true,
+        data: alertTrend,
+        color: "#dc2626",
+        areaStyle: { color: "rgba(220,38,38,0.12)" }
+      },
+      {
+        name: "事件",
+        type: "bar",
+        data: eventTrend,
+        color: "#0f766e",
+        barWidth: 16
+      }
     ]
   });
+}
+
+async function loadAllData() {
+  const [metricData, pointData, alertsData, summaryData, eventsData] = await Promise.all([
+    fetchMetrics(),
+    fetchMonitoringPoints(),
+    fetchAlerts({ status: "active" }),
+    fetchAlertsSummary(),
+    fetchEvents()
+  ]);
+  metrics.value = metricData;
+  points.value = pointData;
+  activeAlerts.value = alertsData;
+  alertSummary.value = summaryData;
+  events.value = eventsData;
 }
 
 watch(activeFilter, () => {
@@ -236,13 +431,37 @@ watch(selectedPointId, () => {
   highlightSelectedMarker();
 });
 
+watch([() => alertSummary.value.active, () => pointAlertCountMap.value.size, () => events.value.length], () => {
+  syncMapMarkers();
+  renderChart();
+});
+
+const handleStorageChange = (e: StorageEvent) => {
+  if (e.key === "ocean_alert_rules_changed") {
+    loadAllData();
+  }
+};
+
 onMounted(async () => {
-  const [metricData, pointData] = await Promise.all([fetchMetrics(), fetchMonitoringPoints()]);
-  metrics.value = metricData;
-  points.value = pointData;
+  await loadAllData();
   await nextTick();
   renderMap();
   renderChart();
+
+  refreshTimer = setInterval(loadAllData, 30000);
+  window.addEventListener("storage", handleStorageChange);
+});
+
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+  if (chartInstance) {
+    chartInstance.dispose();
+    chartInstance = null;
+  }
+  window.removeEventListener("storage", handleStorageChange);
 });
 </script>
 
@@ -328,9 +547,20 @@ onMounted(async () => {
   color: #be185d;
 }
 
+.text-muted {
+  color: #909399;
+  font-size: 13px;
+}
+
 .update-time {
   font-size: 12px;
   color: #64748b;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 :deep(.row-selected) {
