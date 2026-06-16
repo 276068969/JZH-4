@@ -28,8 +28,8 @@ export async function fetchMonitoringPoints() {
   return data;
 }
 
-export async function fetchEvents() {
-  const { data } = await api.get("/events");
+export async function fetchEvents(params?: Record<string, string>) {
+  const { data } = await api.get("/events", { params });
   return data;
 }
 

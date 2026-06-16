@@ -352,8 +352,28 @@ app.patch("/api/alerts/:id/status", requireAuth, (req, res) => {
   res.json(alert);
 });
 
-app.get("/api/events", requireAuth, (_req, res) => {
-  res.json(events);
+app.get("/api/events", requireAuth, (req, res) => {
+  const category = req.query.category as string | undefined;
+  const level = req.query.level as string | undefined;
+  const status = req.query.status as string | undefined;
+  const seaArea = req.query.seaArea as string | undefined;
+
+  let filtered = [...events];
+
+  if (category) {
+    filtered = filtered.filter((e) => e.category === category);
+  }
+  if (level) {
+    filtered = filtered.filter((e) => e.level === level);
+  }
+  if (status) {
+    filtered = filtered.filter((e) => e.status === status);
+  }
+  if (seaArea) {
+    filtered = filtered.filter((e) => e.seaArea === seaArea);
+  }
+
+  res.json(filtered);
 });
 
 app.post("/api/events", requireAuth, (req, res) => {

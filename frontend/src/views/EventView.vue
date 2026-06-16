@@ -4,6 +4,27 @@
       事件监管
       <el-button type="primary" @click="dialogVisible = true">上报事件</el-button>
     </h2>
+
+    <div class="filter-bar">
+      <el-select v-model="filters.category" placeholder="事件类型" clearable style="width: 140px">
+        <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
+      </el-select>
+      <el-select v-model="filters.level" placeholder="事件等级" clearable style="width: 120px">
+        <el-option label="高" value="high" />
+        <el-option label="中" value="medium" />
+        <el-option label="低" value="low" />
+      </el-select>
+      <el-select v-model="filters.status" placeholder="处置状态" clearable style="width: 120px">
+        <el-option label="已上报" value="reported" />
+        <el-option label="处理中" value="processing" />
+        <el-option label="已办结" value="resolved" />
+      </el-select>
+      <el-select v-model="filters.seaArea" placeholder="海域" clearable style="width: 160px">
+        <el-option v-for="a in seaAreaOptions" :key="a" :label="a" :value="a" />
+      </el-select>
+      <el-button @click="resetFilters">重置</el-button>
+    </div>
+
     <el-table :data="events" stripe>
       <el-table-column prop="id" label="编号" width="80" />
       <el-table-column prop="title" label="事件标题" min-width="160" />
@@ -110,7 +131,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { createEvent, fetchEvents, updateEventStatus } from "../services/api";
 
@@ -139,6 +160,49 @@ const form = reactive({
   level: "medium",
   source: "人工上报"
 });
+
+const filters = reactive({
+  category: "",
+  level: "",
+  status: "",
+  seaArea: ""
+});
+
+const categoryOptions = [
+  "违法排放",
+  "异常船舶",
+  "设备告警",
+  "污染预警",
+  "溢油事故",
+  "赤潮预警"
+];
+
+const seaAreaOptions = [
+  "东港近岸海域",
+  "蓝湾工业岸线",
+  "南礁保护区",
+  "北湾养殖区",
+  "西渡航运通道",
+  "中央岛礁海域",
+  "南湾排污区",
+  "东洲浅滩海域"
+];
+
+function buildFilterParams(): Record<string, string> {
+  const params: Record<string, string> = {};
+  if (filters.category) params.category = filters.category;
+  if (filters.level) params.level = filters.level;
+  if (filters.status) params.status = filters.status;
+  if (filters.seaArea) params.seaArea = filters.seaArea;
+  return params;
+}
+
+function resetFilters() {
+  filters.category = "";
+  filters.level = "";
+  filters.status = "";
+  filters.seaArea = "";
+}
 
 const disposalDialogVisible = ref(false);
 const disposalTargetStatus = ref<"processing" | "resolved">("processing");
@@ -175,8 +239,12 @@ function openDisposalDialog(event: EventRecord, targetStatus: "processing" | "re
 }
 
 async function loadEvents() {
-  events.value = await fetchEvents();
+  events.value = await fetchEvents(buildFilterParams());
 }
+
+watch(filters, () => {
+  loadEvents();
+}, { deep: true });
 
 async function submit() {
   await createEvent({ ...form, reporter: "人工上报" });
@@ -218,6 +286,14 @@ onMounted(loadEvents);
 </script>
 
 <style scoped>
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
 .text-muted {
   color: #909399;
   font-size: 13px;
