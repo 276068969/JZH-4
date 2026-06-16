@@ -28,6 +28,11 @@ export async function fetchMonitoringPoints() {
   return data;
 }
 
+export async function fetchMonitoringPointDetail(id: number) {
+  const { data } = await api.get(`/monitoring-points/${id}/detail`);
+  return data;
+}
+
 export async function fetchEvents(params?: Record<string, string>) {
   const { data } = await api.get("/events", { params });
   return data;

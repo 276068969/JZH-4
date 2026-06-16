@@ -328,6 +328,37 @@ app.get("/api/monitoring-points", requireAuth, (_req, res) => {
   res.json(monitoringPoints);
 });
 
+app.get("/api/monitoring-points/:id/detail", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const point = monitoringPoints.find((p) => p.id === id);
+
+  if (!point) {
+    res.status(404).json({ message: "监测点不存在" });
+    return;
+  }
+
+  const seaArea = seaAreas.find((a) => a.name === point.seaArea);
+  const filteredAlerts = filterAlertsByEnabledRules(alertResults);
+  const pointAlerts = filteredAlerts.filter((a) => a.pointId === id);
+  const recentEvents = events
+    .filter((e) => e.seaArea === point.seaArea)
+    .slice(0, 5);
+
+  res.json({
+    point,
+    seaArea: seaArea
+      ? {
+          name: seaArea.name,
+          usageType: seaArea.usageType,
+          jurisdiction: seaArea.jurisdiction,
+          keyRisks: seaArea.keyRisks
+        }
+      : null,
+    alerts: pointAlerts,
+    recentEvents
+  });
+});
+
 app.get("/api/sea-areas", requireAuth, (_req, res) => {
   const result = seaAreas.map((area) => {
     const points = monitoringPoints.filter((p) => area.monitoringPointIds.includes(p.id));

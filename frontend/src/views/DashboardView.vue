@@ -92,16 +92,124 @@
         <el-table-column prop="triggeredAt" label="触发时间" width="140" />
       </el-table>
     </div>
+
+    <el-drawer
+      v-model="drawerVisible"
+      title="监测点详情"
+      size="420px"
+      direction="rtl"
+      @close="selectedPointId = null"
+    >
+      <div v-if="detailLoading" class="detail-loading">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>加载中…</span>
+      </div>
+      <template v-else-if="detailData">
+        <div class="detail-header">
+          <h3 class="detail-point-name">{{ detailData.point.name }}</h3>
+          <el-tag :type="statusType(detailData.point.status)" effect="dark">{{ statusLabel(detailData.point.status) }}</el-tag>
+        </div>
+
+        <div class="detail-section">
+          <h4 class="detail-section-title">水质数据</h4>
+          <div class="detail-row">
+            <span class="detail-label">水质等级</span>
+            <span :class="['quality-badge', qualityClass(detailData.point.waterQuality)]">{{ detailData.point.waterQuality }}</span>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4 class="detail-section-title">气象数据</h4>
+          <div class="detail-row">
+            <span class="detail-label">风速</span>
+            <span class="detail-value">{{ detailData.point.windSpeed }} m/s</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">温度</span>
+            <span class="detail-value">{{ detailData.point.temperature }}°C</span>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4 class="detail-section-title">设备状态</h4>
+          <div class="detail-row">
+            <span class="detail-label">站点类型</span>
+            <span class="detail-value">{{ detailData.point.type }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">坐标</span>
+            <span class="detail-value">{{ detailData.point.latitude }}, {{ detailData.point.longitude }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">更新时间</span>
+            <span class="detail-value">{{ detailData.point.updatedAt }}</span>
+          </div>
+        </div>
+
+        <div class="detail-section" v-if="detailData.seaArea">
+          <h4 class="detail-section-title">所属海域</h4>
+          <div class="detail-row">
+            <span class="detail-label">海域名称</span>
+            <span class="detail-value">{{ detailData.seaArea.name }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">用途类型</span>
+            <span class="detail-value">{{ detailData.seaArea.usageType }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">管辖机构</span>
+            <span class="detail-value">{{ detailData.seaArea.jurisdiction }}</span>
+          </div>
+          <div class="detail-row" v-if="detailData.seaArea.keyRisks?.length">
+            <span class="detail-label">主要风险</span>
+            <div class="detail-risks">
+              <el-tag v-for="risk in detailData.seaArea.keyRisks" :key="risk" size="small" type="warning" effect="plain">{{ risk }}</el-tag>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-section" v-if="detailData.alerts?.length">
+          <h4 class="detail-section-title">
+            活跃告警
+            <el-tag size="small" type="danger" effect="plain">{{ detailData.alerts.length }}</el-tag>
+          </h4>
+          <div v-for="alert in detailData.alerts" :key="alert.id" class="alert-item">
+            <div class="alert-header">
+              <el-tag :type="levelType(alert.level)" size="small">{{ levelLabel(alert.level) }}</el-tag>
+              <span class="alert-name">{{ alert.ruleName }}</span>
+            </div>
+            <p class="alert-message">{{ alert.message }}</p>
+            <span class="alert-time">{{ alert.triggeredAt }}</span>
+          </div>
+        </div>
+
+        <div class="detail-section" v-if="detailData.recentEvents?.length">
+          <h4 class="detail-section-title">最近事件摘要</h4>
+          <div v-for="evt in detailData.recentEvents" :key="evt.id" class="event-item">
+            <div class="event-header">
+              <el-tag :type="eventLevelType(evt.level)" size="small">{{ eventLevelLabel(evt.level) }}</el-tag>
+              <span class="event-title">{{ evt.title }}</span>
+            </div>
+            <div class="event-meta">
+              <el-tag :type="eventStatusType(evt.status)" size="small" effect="dark">{{ eventStatusLabel(evt.status) }}</el-tag>
+              <span class="event-time">{{ evt.occurredAt }}</span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </el-drawer>
   </section>
 </template>
 
 <script setup lang="ts">
 import * as echarts from "echarts";
+import { Loading } from "@element-plus/icons-vue";
 import L from "leaflet";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   fetchMetrics,
   fetchMonitoringPoints,
+  fetchMonitoringPointDetail,
   fetchAlerts,
   fetchAlertsSummary,
   fetchEvents
@@ -164,6 +272,22 @@ const events = ref<EventRecord[]>([]);
 const chartRef = ref<HTMLDivElement | null>(null);
 const activeFilter = ref<string>("all");
 const selectedPointId = ref<number | null>(null);
+
+interface PointDetail {
+  point: Point;
+  seaArea: {
+    name: string;
+    usageType: string;
+    jurisdiction: string;
+    keyRisks: string[];
+  } | null;
+  alerts: AlertRecord[];
+  recentEvents: EventRecord[];
+}
+
+const drawerVisible = ref(false);
+const detailData = ref<PointDetail | null>(null);
+const detailLoading = ref(false);
 
 let mapInstance: L.Map | null = null;
 const markerMap = new Map<number, L.CircleMarker>();
@@ -337,6 +461,32 @@ function highlightSelectedMarker() {
   syncMapMarkers();
 }
 
+function eventLevelLabel(level: string) {
+  return { low: "低", medium: "中", high: "高" }[level] ?? level;
+}
+
+function eventLevelType(level: string) {
+  return level === "high" ? "danger" : level === "medium" ? "warning" : "info";
+}
+
+function eventStatusLabel(status: string) {
+  return { reported: "已上报", processing: "处理中", resolved: "已办结" }[status] ?? status;
+}
+
+function eventStatusType(status: string) {
+  return status === "resolved" ? "success" : status === "processing" ? "warning" : "info";
+}
+
+async function openPointDetail(pointId: number) {
+  detailLoading.value = true;
+  drawerVisible.value = true;
+  try {
+    detailData.value = await fetchMonitoringPointDetail(pointId);
+  } finally {
+    detailLoading.value = false;
+  }
+}
+
 function onRowClick(row: Point) {
   selectedPointId.value = row.id;
   if (mapInstance) {
@@ -427,8 +577,11 @@ watch(activeFilter, () => {
   selectedPointId.value = null;
 });
 
-watch(selectedPointId, () => {
+watch(selectedPointId, (newId) => {
   highlightSelectedMarker();
+  if (newId !== null) {
+    openPointDetail(newId);
+  }
 });
 
 watch([() => alertSummary.value.active, () => pointAlertCountMap.value.size, () => events.value.length], () => {
@@ -580,5 +733,139 @@ onUnmounted(() => {
 .chart {
   width: 100%;
   height: 260px;
+}
+
+.detail-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.detail-point-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #17324d;
+}
+
+.detail-section {
+  margin-bottom: 20px;
+}
+
+.detail-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0c5273;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.detail-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.detail-label {
+  color: #64748b;
+  flex-shrink: 0;
+  min-width: 72px;
+}
+
+.detail-value {
+  color: #17324d;
+  text-align: right;
+  word-break: break-all;
+}
+
+.detail-risks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.alert-item {
+  background: #fef2f2;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.alert-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.alert-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: #17324d;
+}
+
+.alert-message {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.alert-time {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.event-item {
+  background: #f8fafc;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.event-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.event-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #17324d;
+}
+
+.event-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.event-time {
+  font-size: 11px;
+  color: #94a3b8;
 }
 </style>
