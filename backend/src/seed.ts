@@ -820,3 +820,54 @@ export const shipStayRecords: ShipStayRecord[] = [
     createdAt: "2026-06-15 06:00"
   }
 ];
+
+export interface MonitoringPointStats {
+  total: number;
+  normal: number;
+  warning: number;
+  offline: number;
+}
+
+export interface EventStats {
+  total: number;
+  reported: number;
+  processing: number;
+  resolved: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface AlertStats {
+  totalRules: number;
+  enabledRules: number;
+  disabledRules: number;
+  activeAlerts: number;
+  acknowledgedAlerts: number;
+  resolvedAlerts: number;
+  highActiveAlerts: number;
+  mediumActiveAlerts: number;
+  lowActiveAlerts: number;
+}
+
+export interface SeaAreaRegulationStats {
+  id: number;
+  name: string;
+  usageType: string;
+  jurisdiction: string;
+  keyRisks: string[];
+  monitoringPoints: MonitoringPointStats;
+  events: EventStats;
+  alerts: AlertStats;
+}
+
+export interface RegulationStatsResponse {
+  summary: {
+    totalSeaAreas: number;
+    totalMonitoringPoints: number;
+    totalEvents: number;
+    totalAlertRules: number;
+    totalActiveAlerts: number;
+  };
+  seaAreas: SeaAreaRegulationStats[];
+}

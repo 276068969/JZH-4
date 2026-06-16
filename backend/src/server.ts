@@ -24,7 +24,12 @@ import {
   type ShipPositionWithShipInfo,
   type ShipAnomaly,
   type ProtectedAreaIntrusion,
-  type ShipStayRecord
+  type ShipStayRecord,
+  type SeaAreaRegulationStats,
+  type RegulationStatsResponse,
+  type MonitoringPointStats,
+  type EventStats,
+  type AlertStats
 } from "./seed.js";
 
 dotenv.config();
@@ -114,6 +119,75 @@ function buildMetrics() {
   };
 }
 
+function buildMonitoringPointStats(seaAreaName: string): MonitoringPointStats {
+  const points = monitoringPoints.filter((p) => p.seaArea === seaAreaName);
+  return {
+    total: points.length,
+    normal: points.filter((p) => p.status === "normal").length,
+    warning: points.filter((p) => p.status === "warning").length,
+    offline: points.filter((p) => p.status === "offline").length
+  };
+}
+
+function buildEventStats(seaAreaName: string): EventStats {
+  const areaEvents = events.filter((e) => e.seaArea === seaAreaName);
+  return {
+    total: areaEvents.length,
+    reported: areaEvents.filter((e) => e.status === "reported").length,
+    processing: areaEvents.filter((e) => e.status === "processing").length,
+    resolved: areaEvents.filter((e) => e.status === "resolved").length,
+    high: areaEvents.filter((e) => e.level === "high").length,
+    medium: areaEvents.filter((e) => e.level === "medium").length,
+    low: areaEvents.filter((e) => e.level === "low").length
+  };
+}
+
+function buildAlertStats(seaAreaName: string): AlertStats {
+  const areaAlerts = alertResults.filter((a) => a.seaArea === seaAreaName);
+  const areaRules = alertRules.filter((r) => {
+    const rulePointIds = alertResults
+      .filter((a) => a.ruleId === r.id && a.seaArea === seaAreaName)
+      .map((a) => a.pointId);
+    const areaPointIds = monitoringPoints.filter((p) => p.seaArea === seaAreaName).map((p) => p.id);
+    return rulePointIds.length > 0 || areaPointIds.some((pid) => r.target.includes(pid.toString()));
+  });
+  return {
+    totalRules: areaRules.length,
+    enabledRules: areaRules.filter((r) => r.enabled).length,
+    disabledRules: areaRules.filter((r) => !r.enabled).length,
+    activeAlerts: areaAlerts.filter((a) => a.status === "active").length,
+    acknowledgedAlerts: areaAlerts.filter((a) => a.status === "acknowledged").length,
+    resolvedAlerts: areaAlerts.filter((a) => a.status === "resolved").length,
+    highActiveAlerts: areaAlerts.filter((a) => a.level === "high" && a.status === "active").length,
+    mediumActiveAlerts: areaAlerts.filter((a) => a.level === "medium" && a.status === "active").length,
+    lowActiveAlerts: areaAlerts.filter((a) => a.level === "low" && a.status === "active").length
+  };
+}
+
+function buildRegulationStats(): RegulationStatsResponse {
+  const seaAreaStats: SeaAreaRegulationStats[] = seaAreas.map((area) => ({
+    id: area.id,
+    name: area.name,
+    usageType: area.usageType,
+    jurisdiction: area.jurisdiction,
+    keyRisks: area.keyRisks,
+    monitoringPoints: buildMonitoringPointStats(area.name),
+    events: buildEventStats(area.name),
+    alerts: buildAlertStats(area.name)
+  }));
+
+  return {
+    summary: {
+      totalSeaAreas: seaAreas.length,
+      totalMonitoringPoints: monitoringPoints.length,
+      totalEvents: events.length,
+      totalAlertRules: alertRules.length,
+      totalActiveAlerts: alertResults.filter((a) => a.status === "active").length
+    },
+    seaAreas: seaAreaStats
+  };
+}
+
 function runAlertEvaluation() {
   const newAlerts = evaluateAllRules(alertRules, monitoringPoints, alertResults);
   let nextId = alertResults.length > 0 ? Math.max(...alertResults.map((r) => r.id)) + 1 : 1;
@@ -193,6 +267,10 @@ app.post("/api/auth/login", (req, res) => {
 
 app.get("/api/dashboard/metrics", requireAuth, (_req, res) => {
   res.json(buildMetrics());
+});
+
+app.get("/api/regulation/stats", requireAuth, (_req, res) => {
+  res.json(buildRegulationStats());
 });
 
 app.get("/api/monitoring-points", requireAuth, (_req, res) => {
