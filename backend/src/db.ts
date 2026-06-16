@@ -26,7 +26,7 @@ export async function initDatabase(): Promise<boolean> {
     return true;
   } catch (err) {
     console.warn("Database connection failed, falling back to in-memory mode:", (err as Error).message);
-    try { await pool.end(); } catch { /* ignore */ }
+    try { await pool?.end(); } catch { /* ignore */ }
     pool = null;
     return false;
   }
