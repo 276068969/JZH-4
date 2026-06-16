@@ -48,6 +48,11 @@ export async function updateEventStatus(id: number, payload: Record<string, unkn
   return data;
 }
 
+export async function fetchEventAudit(id: number) {
+  const { data } = await api.get(`/events/${id}/audit`);
+  return data;
+}
+
 export async function fetchAlertRules() {
   const { data } = await api.get("/alert-rules");
   return data;

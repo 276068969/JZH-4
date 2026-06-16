@@ -821,6 +821,50 @@ export const shipStayRecords: ShipStayRecord[] = [
   }
 ];
 
+export interface EventStatusAudit {
+  id: number;
+  eventId: number;
+  fromStatus: string;
+  toStatus: string;
+  operator: string;
+  operatorRole: string;
+  operatedAt: string;
+  remark: string;
+}
+
+export const eventStatusAudits: EventStatusAudit[] = [
+  {
+    id: 1,
+    eventId: 1001,
+    fromStatus: "reported",
+    toStatus: "processing",
+    operator: "监管人员",
+    operatorRole: "supervisor",
+    operatedAt: "2026-06-11 09:10",
+    remark: "已派遣执法人员前往现场取样"
+  },
+  {
+    id: 2,
+    eventId: 1003,
+    fromStatus: "reported",
+    toStatus: "processing",
+    operator: "运维值班",
+    operatorRole: "supervisor",
+    operatedAt: "2026-06-10 23:30",
+    remark: "接报后安排运维人员远程排查"
+  },
+  {
+    id: 3,
+    eventId: 1003,
+    fromStatus: "processing",
+    toStatus: "resolved",
+    operator: "李明",
+    operatorRole: "supervisor",
+    operatedAt: "2026-06-11 06:30",
+    remark: "设备重启后恢复正常运行"
+  }
+];
+
 export interface MonitoringPointStats {
   total: number;
   normal: number;

@@ -57,7 +57,7 @@
           {{ row.resolvedAt || '—' }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="100" fixed="right">
+      <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
           <el-button
             v-if="row.status === 'reported'"
@@ -75,7 +75,14 @@
           >
             办结
           </el-button>
-          <span v-if="row.status === 'resolved'" class="text-muted">已闭环</span>
+          <el-button
+            type="info"
+            size="small"
+            plain
+            @click="openAuditDialog(row)"
+          >
+            审计
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -127,13 +134,39 @@
         <el-button type="primary" @click="submitDisposal">确认</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="auditDialogVisible" title="状态变更审计" width="640px">
+      <div v-if="auditRecords.length === 0" class="audit-empty">暂无状态变更记录</div>
+      <el-timeline v-else>
+        <el-timeline-item
+          v-for="record in auditRecords"
+          :key="record.id"
+          :timestamp="record.operatedAt"
+          placement="top"
+          :type="auditTimelineType(record.toStatus)"
+        >
+          <div class="audit-card">
+            <div class="audit-status-change">
+              <el-tag size="small" :type="statusType(record.fromStatus)">{{ statusLabel(record.fromStatus) }}</el-tag>
+              <span class="audit-arrow">→</span>
+              <el-tag size="small" :type="statusType(record.toStatus)">{{ statusLabel(record.toStatus) }}</el-tag>
+            </div>
+            <div class="audit-meta">
+              <span>操作人：<strong>{{ record.operator }}</strong></span>
+              <el-tag size="small" type="info" style="margin-left: 8px">{{ record.operatorRole }}</el-tag>
+            </div>
+            <div v-if="record.remark" class="audit-remark">{{ record.remark }}</div>
+          </div>
+        </el-timeline-item>
+      </el-timeline>
+    </el-dialog>
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
-import { createEvent, fetchEvents, updateEventStatus } from "../services/api";
+import { createEvent, fetchEventAudit, fetchEvents, updateEventStatus } from "../services/api";
 
 interface EventRecord {
   id: number;
@@ -149,6 +182,17 @@ interface EventRecord {
   responsiblePerson: string;
   occurredAt: string;
   resolvedAt?: string;
+}
+
+interface EventStatusAuditRecord {
+  id: number;
+  eventId: number;
+  fromStatus: string;
+  toStatus: string;
+  operator: string;
+  operatorRole: string;
+  operatedAt: string;
+  remark: string;
 }
 
 const events = ref<EventRecord[]>([]);
@@ -282,6 +326,22 @@ async function submitDisposal() {
   }
 }
 
+const auditDialogVisible = ref(false);
+const auditRecords = ref<EventStatusAuditRecord[]>([]);
+
+function auditTimelineType(toStatus: string) {
+  return toStatus === "resolved" ? "success" : toStatus === "processing" ? "warning" : "primary";
+}
+
+async function openAuditDialog(event: EventRecord) {
+  try {
+    auditRecords.value = await fetchEventAudit(event.id);
+    auditDialogVisible.value = true;
+  } catch {
+    ElMessage.error("获取审计记录失败");
+  }
+}
+
 onMounted(loadEvents);
 </script>
 
@@ -297,5 +357,39 @@ onMounted(loadEvents);
 .text-muted {
   color: #909399;
   font-size: 13px;
+}
+
+.audit-empty {
+  text-align: center;
+  color: #909399;
+  padding: 32px 0;
+}
+
+.audit-card {
+  padding: 4px 0;
+}
+
+.audit-status-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.audit-arrow {
+  color: #909399;
+  font-size: 16px;
+}
+
+.audit-meta {
+  color: #606266;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.audit-remark {
+  color: #909399;
+  font-size: 13px;
+  margin-top: 2px;
 }
 </style>

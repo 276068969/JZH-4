@@ -94,6 +94,24 @@ INSERT INTO event_records (title, category, sea_area, level, status, reporter, a
   ('南礁保护区异常船舶停留', '异常船舶', '南礁保护区', 'medium', 'reported', 'AIS 雷达', '未分派', 'AIS 雷达', '', '', '2026-06-11 08:55:00', NULL),
   ('北湾气象站离线', '设备告警', '北湾养殖区', 'low', 'resolved', '设备心跳', '运维值班', '设备心跳', '设备重启后恢复正常运行', '李明', '2026-06-10 22:15:00', '2026-06-11 06:30:00');
 
+CREATE TABLE IF NOT EXISTS event_status_audits (
+  id SERIAL PRIMARY KEY,
+  event_id INTEGER NOT NULL REFERENCES event_records(id),
+  from_status VARCHAR(32) NOT NULL,
+  to_status VARCHAR(32) NOT NULL,
+  operator VARCHAR(64) NOT NULL,
+  operator_role VARCHAR(32) NOT NULL,
+  operated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  remark TEXT DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_status_audits_event_id ON event_status_audits(event_id);
+
+INSERT INTO event_status_audits (event_id, from_status, to_status, operator, operator_role, operated_at, remark) VALUES
+  (1, 'reported', 'processing', '监管人员', 'supervisor', '2026-06-11 09:10:00', '已派遣执法人员前往现场取样'),
+  (3, 'reported', 'processing', '运维值班', 'supervisor', '2026-06-10 23:30:00', '接报后安排运维人员远程排查'),
+  (3, 'processing', 'resolved', '李明', 'supervisor', '2026-06-11 06:30:00', '设备重启后恢复正常运行');
+
 CREATE TABLE IF NOT EXISTS ships (
   id SERIAL PRIMARY KEY,
   mmsi VARCHAR(16) UNIQUE NOT NULL,

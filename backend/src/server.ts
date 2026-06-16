@@ -9,6 +9,7 @@ import {
   alertResults,
   alertRules,
   events,
+  eventStatusAudits,
   monitoringPoints,
   seaAreas,
   ships,
@@ -20,6 +21,7 @@ import {
   type AlertResult,
   type AlertRule,
   type EventRecord,
+  type EventStatusAudit,
   type Ship,
   type ShipPosition,
   type ShipPositionWithShipInfo,
@@ -612,8 +614,37 @@ app.patch("/api/events/:id/status", requireAuth, (req, res) => {
     event.resolvedAt = new Date().toISOString().slice(0, 16).replace("T", " ");
   }
 
+  const user = res.locals.user as { name?: string; username?: string; role?: string };
+  const auditRecord: EventStatusAudit = {
+    id: eventStatusAudits.length > 0 ? Math.max(...eventStatusAudits.map((a) => a.id)) + 1 : 1,
+    eventId: id,
+    fromStatus: event.status,
+    toStatus: status,
+    operator: user?.name || user?.username || "未知",
+    operatorRole: user?.role || "unknown",
+    operatedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+    remark: disposalNote || responsiblePerson || ""
+  };
+  eventStatusAudits.push(auditRecord);
+
   event.status = status;
   res.json(event);
+});
+
+app.get("/api/events/:id/audit", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const event = events.find((item) => item.id === id);
+
+  if (!event) {
+    res.status(404).json({ message: "事件不存在" });
+    return;
+  }
+
+  const audits = eventStatusAudits
+    .filter((a) => a.eventId === id)
+    .sort((a, b) => new Date(a.operatedAt).getTime() - new Date(b.operatedAt).getTime());
+
+  res.json(audits);
 });
 
 app.get("/api/admin/users", requireAuth, (_req, res) => {
