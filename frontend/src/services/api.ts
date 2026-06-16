@@ -183,6 +183,8 @@ export interface SeaAreaRegulationStats {
   usageType: string;
   jurisdiction: string;
   keyRisks: string[];
+  hasMonitoringPoints: boolean;
+  hasActiveAlerts: boolean;
   monitoringPoints: MonitoringPointStats;
   events: EventStats;
   alerts: AlertStats;
@@ -195,6 +197,8 @@ export interface RegulationStatsResponse {
     totalEvents: number;
     totalAlertRules: number;
     totalActiveAlerts: number;
+    noAlertSeaAreas: number;
+    emptySeaAreas: number;
   };
   seaAreas: SeaAreaRegulationStats[];
 }

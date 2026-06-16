@@ -142,14 +142,37 @@ function buildEventStats(seaAreaName: string): EventStats {
   };
 }
 
+const pointTypeMetricsMap: Record<string, AlertMetric[]> = {
+  水质浮标: ["water_quality", "status", "temperature"],
+  排口监测: ["water_quality", "status", "temperature"],
+  船舶监管: ["status"],
+  气象监测: ["wind_speed", "temperature", "status"]
+};
+
+function getRuleApplicablePointIds(rule: AlertRule): Set<number> {
+  if (!rule.conditionStruct) return new Set();
+  const metric = rule.conditionStruct.metric;
+  const applicablePointIds = monitoringPoints
+    .filter((point) => {
+      const metrics = pointTypeMetricsMap[point.type] ?? [];
+      return metrics.includes(metric);
+    })
+    .map((point) => point.id);
+  return new Set(applicablePointIds);
+}
+
 function buildAlertStats(seaAreaName: string): AlertStats {
   const areaAlerts = alertResults.filter((a) => a.seaArea === seaAreaName);
+  const areaPointIds = new Set(
+    monitoringPoints.filter((p) => p.seaArea === seaAreaName).map((p) => p.id)
+  );
   const areaRules = alertRules.filter((r) => {
-    const rulePointIds = alertResults
-      .filter((a) => a.ruleId === r.id && a.seaArea === seaAreaName)
-      .map((a) => a.pointId);
-    const areaPointIds = monitoringPoints.filter((p) => p.seaArea === seaAreaName).map((p) => p.id);
-    return rulePointIds.length > 0 || areaPointIds.some((pid) => r.target.includes(pid.toString()));
+    if (!r.conditionStruct) return false;
+    const applicablePointIds = getRuleApplicablePointIds(r);
+    for (const pointId of applicablePointIds) {
+      if (areaPointIds.has(pointId)) return true;
+    }
+    return false;
   });
   return {
     totalRules: areaRules.length,
@@ -165,16 +188,29 @@ function buildAlertStats(seaAreaName: string): AlertStats {
 }
 
 function buildRegulationStats(): RegulationStatsResponse {
-  const seaAreaStats: SeaAreaRegulationStats[] = seaAreas.map((area) => ({
-    id: area.id,
-    name: area.name,
-    usageType: area.usageType,
-    jurisdiction: area.jurisdiction,
-    keyRisks: area.keyRisks,
-    monitoringPoints: buildMonitoringPointStats(area.name),
-    events: buildEventStats(area.name),
-    alerts: buildAlertStats(area.name)
-  }));
+  const seaAreaStats: SeaAreaRegulationStats[] = seaAreas.map((area) => {
+    const mpStats = buildMonitoringPointStats(area.name);
+    const alertStats = buildAlertStats(area.name);
+    const hasMonitoringPoints = mpStats.total > 0;
+    const hasActiveAlerts = alertStats.activeAlerts > 0;
+    return {
+      id: area.id,
+      name: area.name,
+      usageType: area.usageType,
+      jurisdiction: area.jurisdiction,
+      keyRisks: area.keyRisks,
+      hasMonitoringPoints,
+      hasActiveAlerts,
+      monitoringPoints: mpStats,
+      events: buildEventStats(area.name),
+      alerts: alertStats
+    };
+  });
+
+  const noAlertSeaAreas = seaAreaStats.filter(
+    (s) => s.hasMonitoringPoints && !s.hasActiveAlerts
+  ).length;
+  const emptySeaAreas = seaAreaStats.filter((s) => !s.hasMonitoringPoints).length;
 
   return {
     summary: {
@@ -182,7 +218,9 @@ function buildRegulationStats(): RegulationStatsResponse {
       totalMonitoringPoints: monitoringPoints.length,
       totalEvents: events.length,
       totalAlertRules: alertRules.length,
-      totalActiveAlerts: alertResults.filter((a) => a.status === "active").length
+      totalActiveAlerts: alertResults.filter((a) => a.status === "active").length,
+      noAlertSeaAreas,
+      emptySeaAreas
     },
     seaAreas: seaAreaStats
   };
