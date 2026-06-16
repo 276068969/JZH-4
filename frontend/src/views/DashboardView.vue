@@ -224,6 +224,8 @@ interface Point {
   longitude: number;
   status: string;
   waterQuality: string;
+  windSpeed: number;
+  temperature: number;
   updatedAt: string;
 }
 
