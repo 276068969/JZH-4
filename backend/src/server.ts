@@ -93,11 +93,21 @@ const intrusionStatusSchema = z.object({
   disposalNote: z.string().optional()
 });
 
+function getEnabledRuleIds(): Set<number> {
+  return new Set(alertRules.filter((r) => r.enabled).map((r) => r.id));
+}
+
+function filterAlertsByEnabledRules(alerts: AlertResult[]): AlertResult[] {
+  const enabledRuleIds = getEnabledRuleIds();
+  return alerts.filter((a) => enabledRuleIds.has(a.ruleId));
+}
+
 function buildMetrics() {
   const warningPoints = monitoringPoints.filter((point) => point.status === "warning").length;
   const offlinePoints = monitoringPoints.filter((point) => point.status === "offline").length;
   const openEvents = events.filter((event) => event.status !== "resolved").length;
-  const activeAlerts = alertResults.filter((r) => r.status === "active").length;
+  const filteredAlerts = filterAlertsByEnabledRules(alertResults);
+  const activeAlerts = filteredAlerts.filter((r) => r.status === "active").length;
   const activeShips = shipPositions.length;
   const abnormalShips = ships.filter((s) => s.status === "abnormal").length;
   const activeIntrusions = protectedAreaIntrusions.filter((i) => i.status === "active").length;
@@ -163,7 +173,8 @@ function getRuleApplicablePointIds(rule: AlertRule): Set<number> {
 }
 
 function buildAlertStats(seaAreaName: string): AlertStats {
-  const areaAlerts = alertResults.filter((a) => a.seaArea === seaAreaName);
+  const filteredAlerts = filterAlertsByEnabledRules(alertResults);
+  const areaAlerts = filteredAlerts.filter((a) => a.seaArea === seaAreaName);
   const areaPointIds = new Set(
     monitoringPoints.filter((p) => p.seaArea === seaAreaName).map((p) => p.id)
   );
@@ -213,13 +224,14 @@ function buildRegulationStats(): RegulationStatsResponse {
   ).length;
   const emptySeaAreas = seaAreaStats.filter((s) => !s.hasMonitoringPoints).length;
 
+  const filteredAlerts = filterAlertsByEnabledRules(alertResults);
   return {
     summary: {
       totalSeaAreas: seaAreas.length,
       totalMonitoringPoints: monitoringPoints.length,
       totalEvents: events.length,
       totalAlertRules: alertRules.length,
-      totalActiveAlerts: alertResults.filter((a) => a.status === "active").length,
+      totalActiveAlerts: filteredAlerts.filter((a) => a.status === "active").length,
       noAlertSeaAreas,
       emptySeaAreas
     },
@@ -407,7 +419,7 @@ app.get("/api/alerts", requireAuth, (req, res) => {
   const status = req.query.status as string | undefined;
   const level = req.query.level as string | undefined;
 
-  let filtered = [...alertResults];
+  let filtered = filterAlertsByEnabledRules(alertResults);
 
   if (status) {
     filtered = filtered.filter((a) => a.status === status);
@@ -420,14 +432,15 @@ app.get("/api/alerts", requireAuth, (req, res) => {
 });
 
 app.get("/api/alerts/summary", requireAuth, (_req, res) => {
+  const filteredAlerts = filterAlertsByEnabledRules(alertResults);
   const summary = {
-    total: alertResults.length,
-    active: alertResults.filter((a) => a.status === "active").length,
-    acknowledged: alertResults.filter((a) => a.status === "acknowledged").length,
-    resolved: alertResults.filter((a) => a.status === "resolved").length,
-    high: alertResults.filter((a) => a.level === "high" && a.status === "active").length,
-    medium: alertResults.filter((a) => a.level === "medium" && a.status === "active").length,
-    low: alertResults.filter((a) => a.level === "low" && a.status === "active").length
+    total: filteredAlerts.length,
+    active: filteredAlerts.filter((a) => a.status === "active").length,
+    acknowledged: filteredAlerts.filter((a) => a.status === "acknowledged").length,
+    resolved: filteredAlerts.filter((a) => a.status === "resolved").length,
+    high: filteredAlerts.filter((a) => a.level === "high" && a.status === "active").length,
+    medium: filteredAlerts.filter((a) => a.level === "medium" && a.status === "active").length,
+    low: filteredAlerts.filter((a) => a.level === "low" && a.status === "active").length
   };
   res.json(summary);
 });
