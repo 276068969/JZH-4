@@ -43,6 +43,11 @@ export async function createEvent(payload: Record<string, unknown>) {
   return data;
 }
 
+export async function reportPollutionAlert(payload: Record<string, unknown>) {
+  const { data } = await api.post("/events/pollution-alert", payload);
+  return data;
+}
+
 export async function updateEventStatus(id: number, payload: Record<string, unknown>) {
   const { data } = await api.patch(`/events/${id}/status`, payload);
   return data;

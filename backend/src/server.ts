@@ -59,6 +59,14 @@ const eventSchema = z.object({
   source: z.enum(["人工上报", "自动监测", "AIS 雷达", "设备心跳", "群众举报"]).default("人工上报")
 });
 
+const pollutionAlertSchema = z.object({
+  pollutionType: z.enum(["废水排放", "原油泄漏", "赤潮", "危险化学品", "垃圾倾倒", "其他"]),
+  suspectedSource: z.string().min(2),
+  seaArea: z.string().min(2),
+  level: z.enum(["low", "medium", "high"]),
+  description: z.string().min(5)
+});
+
 const alertConditionSchema = z.object({
   metric: z.enum(["water_quality", "wind_speed", "status", "temperature"]),
   operator: z.enum(["gt", "gte", "lt", "lte", "eq", "neq", "in"]),
@@ -610,6 +618,108 @@ app.post("/api/events", requireAuth, async (req, res) => {
   };
   events.unshift(event);
   res.status(201).json(event);
+});
+
+app.post("/api/events/pollution-alert", requireAuth, async (req, res) => {
+  const user = res.locals.user as { name?: string; username?: string; role?: string };
+  if (user.role !== "admin" && user.role !== "supervisor") {
+    res.status(403).json({ message: "无权限上报污染预警" });
+    return;
+  }
+
+  const parsed = pollutionAlertSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "预警信息不完整" });
+    return;
+  }
+
+  const { pollutionType, suspectedSource, seaArea, level, description } = parsed.data;
+  const title = `[污染预警] ${pollutionType} - ${seaArea}`;
+  const category = "污染预警";
+  const source = "人工上报";
+
+  const reporter = user?.name || user?.username || "监管人员";
+
+  const fullDescription =
+    `污染类型：${pollutionType}\n` +
+    `疑似来源：${suspectedSource}\n` +
+    `现场描述：${description}`;
+
+  if (isDbAvailable()) {
+    try {
+      const client = await getPool()!.connect();
+      try {
+        await client.query("BEGIN");
+        const now = new Date();
+        const { rows } = await client.query(
+          `INSERT INTO event_records (title, category, sea_area, level, status, reporter, assignee, source, disposal_note, responsible_person, occurred_at)
+           VALUES ($1,$2,$3,$4,'reported',$5,'未分派',$6,$7,'',$8) RETURNING *`,
+          [title, category, seaArea, level, reporter, source, fullDescription, now]
+        );
+        const eventId = rows[0].id as number;
+
+        await client.query(
+          `INSERT INTO event_status_audits (event_id, from_status, to_status, operator, operator_role, operated_at, remark)
+           VALUES ($1,'reported','reported',$2,$3,$4,$5)`,
+          [eventId, reporter, user?.role || "supervisor", now, "污染预警上报"]
+        );
+
+        await client.query("COMMIT");
+        await syncEventsToMemory(events);
+
+        res.status(201).json({
+          eventId,
+          title,
+          status: "reported",
+          message: "污染预警已上报，已同步至事件监管"
+        });
+      } catch (err) {
+        await client.query("ROLLBACK");
+        console.error("Pollution alert creation failed:", err);
+        res.status(500).json({ message: "预警上报失败" });
+      } finally {
+        client.release();
+      }
+    } catch {
+      res.status(500).json({ message: "预警上报失败" });
+    }
+    return;
+  }
+
+  const event: EventRecord = {
+    id: Math.max(...events.map((item) => item.id)) + 1,
+    title,
+    category,
+    seaArea,
+    level,
+    status: "reported",
+    reporter,
+    assignee: "未分派",
+    source,
+    disposalNote: fullDescription,
+    responsiblePerson: "",
+    occurredAt: new Date().toISOString().slice(0, 16).replace("T", " ")
+  };
+
+  const auditRecord: EventStatusAudit = {
+    id: eventStatusAudits.length > 0 ? Math.max(...eventStatusAudits.map((a) => a.id)) + 1 : 1,
+    eventId: event.id,
+    fromStatus: "reported",
+    toStatus: "reported",
+    operator: reporter,
+    operatorRole: user?.role || "supervisor",
+    operatedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+    remark: "污染预警上报"
+  };
+  eventStatusAudits.push(auditRecord);
+
+  events.unshift(event);
+  res.status(201).json({
+    eventId: event.id,
+    title,
+    status: "reported",
+    message: "污染预警已上报，已同步至事件监管"
+  });
 });
 
 app.patch("/api/events/:id/status", requireAuth, async (req, res) => {

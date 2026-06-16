@@ -6,6 +6,7 @@
         <el-menu-item index="/dashboard">监管大屏</el-menu-item>
         <el-menu-item index="/sea-areas">海域基础信息</el-menu-item>
         <el-menu-item index="/ships">船舶监管</el-menu-item>
+        <el-menu-item v-if="canReportPollution" index="/pollution-alert">污染预警上报</el-menu-item>
         <el-menu-item index="/events">事件监管</el-menu-item>
         <el-menu-item index="/admin">后台管理</el-menu-item>
       </el-menu>
@@ -32,6 +33,11 @@ const auth = useAuthStore();
 const roleLabel = computed(() => {
   const map = { admin: "管理员", supervisor: "监管人员", user: "普通用户" };
   return auth.user ? map[auth.user.role] : "";
+});
+
+const canReportPollution = computed(() => {
+  if (!auth.user) return false;
+  return auth.user.role === "admin" || auth.user.role === "supervisor";
 });
 
 async function logout() {
