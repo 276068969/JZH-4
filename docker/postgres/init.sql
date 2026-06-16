@@ -89,10 +89,14 @@ INSERT INTO alert_rules (name, target, condition_text, condition_metric, conditi
   ('风速超限告警', '气象', '风速 > 10m/s', 'wind_speed', 'gt', '10', 'm/s', 'low', TRUE),
   ('设备预警状态', '设备', '设备状态 = warning', 'status', 'eq', 'warning', '', 'medium', TRUE);
 
-INSERT INTO event_records (title, category, sea_area, level, status, reporter, assignee, source, disposal_note, responsible_person, occurred_at, resolved_at) VALUES
-  ('蓝湾排口疑似违法排放', '违法排放', '蓝湾工业岸线', 'high', 'processing', '水质自动监测', '监管人员', '自动监测', '已派遣执法人员前往现场取样', '张伟', '2026-06-11 08:42:00', NULL),
-  ('南礁保护区异常船舶停留', '异常船舶', '南礁保护区', 'medium', 'reported', 'AIS 雷达', '未分派', 'AIS 雷达', '', '', '2026-06-11 08:55:00', NULL),
-  ('北湾气象站离线', '设备告警', '北湾养殖区', 'low', 'resolved', '设备心跳', '运维值班', '设备心跳', '设备重启后恢复正常运行', '李明', '2026-06-10 22:15:00', '2026-06-11 06:30:00');
+INSERT INTO event_records (title, category, sea_area, level, status, reporter, assignee, source, disposal_note, responsible_person, occurred_at, resolved_at)
+SELECT title, category, sea_area, level, status, reporter, assignee, source, disposal_note, responsible_person, occurred_at, resolved_at
+FROM (VALUES
+  ('蓝湾排口疑似违法排放', '违法排放', '蓝湾工业岸线', 'high', 'processing', '水质自动监测', '监管人员', '自动监测', '已派遣执法人员前往现场取样', '张伟', '2026-06-11 08:42:00'::TIMESTAMP, NULL::TIMESTAMP),
+  ('南礁保护区异常船舶停留', '异常船舶', '南礁保护区', 'medium', 'reported', 'AIS 雷达', '未分派', 'AIS 雷达', '', '', '2026-06-11 08:55:00'::TIMESTAMP, NULL::TIMESTAMP),
+  ('北湾气象站离线', '设备告警', '北湾养殖区', 'low', 'resolved', '设备心跳', '运维值班', '设备心跳', '设备重启后恢复正常运行', '李明', '2026-06-10 22:15:00'::TIMESTAMP, '2026-06-11 06:30:00'::TIMESTAMP)
+) AS v(title, category, sea_area, level, status, reporter, assignee, source, disposal_note, responsible_person, occurred_at, resolved_at)
+WHERE NOT EXISTS (SELECT 1 FROM event_records WHERE title = v.title);
 
 CREATE TABLE IF NOT EXISTS event_status_audits (
   id SERIAL PRIMARY KEY,
@@ -107,10 +111,15 @@ CREATE TABLE IF NOT EXISTS event_status_audits (
 
 CREATE INDEX IF NOT EXISTS idx_event_status_audits_event_id ON event_status_audits(event_id);
 
-INSERT INTO event_status_audits (event_id, from_status, to_status, operator, operator_role, operated_at, remark) VALUES
-  (1, 'reported', 'processing', '监管人员', 'supervisor', '2026-06-11 09:10:00', '已派遣执法人员前往现场取样'),
-  (3, 'reported', 'processing', '运维值班', 'supervisor', '2026-06-10 23:30:00', '接报后安排运维人员远程排查'),
-  (3, 'processing', 'resolved', '李明', 'supervisor', '2026-06-11 06:30:00', '设备重启后恢复正常运行');
+INSERT INTO event_status_audits (event_id, from_status, to_status, operator, operator_role, operated_at, remark)
+SELECT e.id, 'reported', 'processing', '监管人员', 'supervisor', '2026-06-11 09:10:00', '已派遣执法人员前往现场取样'
+FROM event_records e WHERE e.title = '蓝湾排口疑似违法排放' AND NOT EXISTS (SELECT 1 FROM event_status_audits WHERE event_id = e.id AND to_status = 'processing' LIMIT 1)
+UNION ALL
+SELECT e.id, 'reported', 'processing', '运维值班', 'supervisor', '2026-06-10 23:30:00', '接报后安排运维人员远程排查'
+FROM event_records e WHERE e.title = '北湾气象站离线' AND NOT EXISTS (SELECT 1 FROM event_status_audits WHERE event_id = e.id AND to_status = 'processing' LIMIT 1)
+UNION ALL
+SELECT e.id, 'processing', 'resolved', '李明', 'supervisor', '2026-06-11 06:30:00', '设备重启后恢复正常运行'
+FROM event_records e WHERE e.title = '北湾气象站离线' AND NOT EXISTS (SELECT 1 FROM event_status_audits WHERE event_id = e.id AND to_status = 'resolved' LIMIT 1);
 
 CREATE TABLE IF NOT EXISTS ships (
   id SERIAL PRIMARY KEY,

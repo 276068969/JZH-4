@@ -4,6 +4,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { evaluateAllRules } from "./alertEngine.js";
+import { checkPersistence, getPool, initDatabase, isDbAvailable, mapAuditRow, mapEventRow, syncEventsToMemory } from "./db.js";
 import {
   accounts,
   alertResults,
@@ -270,8 +271,31 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
   }
 }
 
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", service: "ocean-regulation-backend" });
+app.get("/api/health", async (_req, res) => {
+  const persistence = await checkPersistence();
+  res.json({
+    status: "ok",
+    service: "ocean-regulation-backend",
+    persistence: isDbAvailable() ? "database" : "in-memory",
+    db: persistence.dbConnected ? { eventCount: persistence.eventCount, auditCount: persistence.auditCount } : null
+  });
+});
+
+app.get("/api/health/persistence", async (_req, res) => {
+  const persistence = await checkPersistence();
+  if (!persistence.dbConnected) {
+    res.status(503).json({
+      persistent: false,
+      message: "Database not connected, event audit data is in-memory only and will be lost on restart"
+    });
+    return;
+  }
+  res.json({
+    persistent: true,
+    eventCount: persistence.eventCount,
+    auditCount: persistence.auditCount,
+    latestAuditAt: persistence.latestAuditAt
+  });
 });
 
 app.post("/api/auth/login", (req, res) => {
@@ -515,34 +539,58 @@ app.patch("/api/alerts/:id/status", requireAuth, (req, res) => {
   res.json(alert);
 });
 
-app.get("/api/events", requireAuth, (req, res) => {
+app.get("/api/events", requireAuth, async (req, res) => {
   const category = req.query.category as string | undefined;
   const level = req.query.level as string | undefined;
   const status = req.query.status as string | undefined;
   const seaArea = req.query.seaArea as string | undefined;
 
+  if (isDbAvailable()) {
+    try {
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+      let idx = 1;
+      if (category) { conditions.push(`category = $${idx++}`); params.push(category); }
+      if (level) { conditions.push(`level = $${idx++}`); params.push(level); }
+      if (status) { conditions.push(`status = $${idx++}`); params.push(status); }
+      if (seaArea) { conditions.push(`sea_area = $${idx++}`); params.push(seaArea); }
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      const { rows } = await getPool()!.query(`SELECT * FROM event_records ${where} ORDER BY occurred_at DESC`, params);
+      res.json(rows.map((r) => mapEventRow(r as Record<string, unknown>)));
+    } catch {
+      res.status(500).json({ message: "查询事件失败" });
+    }
+    return;
+  }
+
   let filtered = [...events];
-
-  if (category) {
-    filtered = filtered.filter((e) => e.category === category);
-  }
-  if (level) {
-    filtered = filtered.filter((e) => e.level === level);
-  }
-  if (status) {
-    filtered = filtered.filter((e) => e.status === status);
-  }
-  if (seaArea) {
-    filtered = filtered.filter((e) => e.seaArea === seaArea);
-  }
-
+  if (category) filtered = filtered.filter((e) => e.category === category);
+  if (level) filtered = filtered.filter((e) => e.level === level);
+  if (status) filtered = filtered.filter((e) => e.status === status);
+  if (seaArea) filtered = filtered.filter((e) => e.seaArea === seaArea);
   res.json(filtered);
 });
 
-app.post("/api/events", requireAuth, (req, res) => {
+app.post("/api/events", requireAuth, async (req, res) => {
   const parsed = eventSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ message: "事件信息不完整" });
+    return;
+  }
+
+  if (isDbAvailable()) {
+    try {
+      const now = new Date();
+      const { rows } = await getPool()!.query(
+        `INSERT INTO event_records (title, category, sea_area, level, status, reporter, assignee, source, disposal_note, responsible_person, occurred_at)
+         VALUES ($1,$2,$3,$4,'reported',$5,'未分派',$6,'','',$7) RETURNING *`,
+        [parsed.data.title, parsed.data.category, parsed.data.seaArea, parsed.data.level, parsed.data.reporter, parsed.data.source, now]
+      );
+      await syncEventsToMemory(events);
+      res.status(201).json(mapEventRow(rows[0] as Record<string, unknown>));
+    } catch {
+      res.status(500).json({ message: "创建事件失败" });
+    }
     return;
   }
 
@@ -560,12 +608,11 @@ app.post("/api/events", requireAuth, (req, res) => {
     responsiblePerson: "",
     occurredAt: new Date().toISOString().slice(0, 16).replace("T", " ")
   };
-
   events.unshift(event);
   res.status(201).json(event);
 });
 
-app.patch("/api/events/:id/status", requireAuth, (req, res) => {
+app.patch("/api/events/:id/status", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   const statusSchema = z.object({
     status: z.enum(["reported", "processing", "resolved"]),
@@ -573,12 +620,6 @@ app.patch("/api/events/:id/status", requireAuth, (req, res) => {
     responsiblePerson: z.string().optional()
   });
   const parsed = statusSchema.safeParse(req.body);
-  const event = events.find((item) => item.id === id);
-
-  if (!event) {
-    res.status(404).json({ message: "事件不存在" });
-    return;
-  }
 
   if (!parsed.success) {
     res.status(400).json({ message: "状态值无效" });
@@ -587,15 +628,106 @@ app.patch("/api/events/:id/status", requireAuth, (req, res) => {
 
   const { status, disposalNote, responsiblePerson } = parsed.data;
 
+  if (isDbAvailable()) {
+    const client = await getPool()!.connect();
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query("SELECT * FROM event_records WHERE id = $1 FOR UPDATE", [id]);
+      if (rows.length === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ message: "事件不存在" });
+        return;
+      }
+
+      const current = rows[0] as Record<string, unknown>;
+      const currentStatus = current.status as string;
+      const currentResponsible = (current.responsible_person as string) ?? "";
+
+      if (status === "processing") {
+        if (!responsiblePerson || responsiblePerson.trim() === "") {
+          await client.query("ROLLBACK");
+          res.status(400).json({ message: "处理中状态必须填写责任人" });
+          return;
+        }
+      }
+
+      if (status === "resolved") {
+        if (!disposalNote || disposalNote.trim() === "") {
+          await client.query("ROLLBACK");
+          res.status(400).json({ message: "办结状态必须填写处置说明" });
+          return;
+        }
+        if (!currentResponsible && (!responsiblePerson || responsiblePerson.trim() === "")) {
+          await client.query("ROLLBACK");
+          res.status(400).json({ message: "办结状态必须指定责任人" });
+          return;
+        }
+      }
+
+      const updates: string[] = ["status = $1"];
+      const params: unknown[] = [status];
+      let pIdx = 2;
+
+      if (status === "processing") {
+        updates.push(`responsible_person = $${pIdx++}`);
+        params.push(responsiblePerson);
+        if (disposalNote !== undefined) {
+          updates.push(`disposal_note = $${pIdx++}`);
+          params.push(disposalNote);
+        }
+      }
+
+      if (status === "resolved") {
+        updates.push(`disposal_note = $${pIdx++}`);
+        params.push(disposalNote);
+        if (responsiblePerson !== undefined) {
+          updates.push(`responsible_person = $${pIdx++}`);
+          params.push(responsiblePerson);
+        }
+        const now = new Date();
+        updates.push(`resolved_at = $${pIdx++}`);
+        params.push(now);
+      }
+
+      params.push(id);
+      await client.query(`UPDATE event_records SET ${updates.join(", ")} WHERE id = $${pIdx}`, params);
+
+      const user = res.locals.user as { name?: string; username?: string; role?: string };
+      await client.query(
+        `INSERT INTO event_status_audits (event_id, from_status, to_status, operator, operator_role, operated_at, remark)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [id, currentStatus, status, user?.name || user?.username || "未知", user?.role || "unknown", new Date(), disposalNote || responsiblePerson || ""]
+      );
+
+      await client.query("COMMIT");
+      await syncEventsToMemory(events);
+
+      const updated = await client.query("SELECT * FROM event_records WHERE id = $1", [id]);
+      res.json(mapEventRow(updated.rows[0] as Record<string, unknown>));
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("Event status update failed:", err);
+      res.status(500).json({ message: "状态更新失败" });
+    } finally {
+      client.release();
+    }
+    return;
+  }
+
+  const event = events.find((item) => item.id === id);
+  if (!event) {
+    res.status(404).json({ message: "事件不存在" });
+    return;
+  }
+
   if (status === "processing") {
     if (!responsiblePerson || responsiblePerson.trim() === "") {
       res.status(400).json({ message: "处理中状态必须填写责任人" });
       return;
     }
     event.responsiblePerson = responsiblePerson;
-    if (disposalNote !== undefined) {
-      event.disposalNote = disposalNote;
-    }
+    if (disposalNote !== undefined) { event.disposalNote = disposalNote; }
   }
 
   if (status === "resolved") {
@@ -608,9 +740,7 @@ app.patch("/api/events/:id/status", requireAuth, (req, res) => {
       return;
     }
     event.disposalNote = disposalNote;
-    if (responsiblePerson !== undefined) {
-      event.responsiblePerson = responsiblePerson;
-    }
+    if (responsiblePerson !== undefined) { event.responsiblePerson = responsiblePerson; }
     event.resolvedAt = new Date().toISOString().slice(0, 16).replace("T", " ");
   }
 
@@ -631,10 +761,28 @@ app.patch("/api/events/:id/status", requireAuth, (req, res) => {
   res.json(event);
 });
 
-app.get("/api/events/:id/audit", requireAuth, (req, res) => {
+app.get("/api/events/:id/audit", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
-  const event = events.find((item) => item.id === id);
 
+  if (isDbAvailable()) {
+    try {
+      const evCheck = await getPool()!.query("SELECT id FROM event_records WHERE id = $1", [id]);
+      if (evCheck.rows.length === 0) {
+        res.status(404).json({ message: "事件不存在" });
+        return;
+      }
+      const { rows } = await getPool()!.query(
+        "SELECT * FROM event_status_audits WHERE event_id = $1 ORDER BY operated_at ASC",
+        [id]
+      );
+      res.json(rows.map((r) => mapAuditRow(r as Record<string, unknown>)));
+    } catch {
+      res.status(500).json({ message: "查询审计记录失败" });
+    }
+    return;
+  }
+
+  const event = events.find((item) => item.id === id);
   if (!event) {
     res.status(404).json({ message: "事件不存在" });
     return;
@@ -929,6 +1077,11 @@ app.get("/api/ships/summary", requireAuth, (_req, res) => {
   res.json(summary);
 });
 
-app.listen(port, () => {
+app.listen(port, async () => {
+  await initDatabase();
+  if (isDbAvailable()) {
+    await syncEventsToMemory(events);
+  }
   console.log(`Ocean regulation backend listening on http://localhost:${port}`);
+  console.log(`Event persistence: ${isDbAvailable() ? "DATABASE" : "IN-MEMORY (data lost on restart)"}`);
 });
