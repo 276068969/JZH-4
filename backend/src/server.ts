@@ -16,6 +16,7 @@ import {
   shipAnomalies,
   protectedAreaIntrusions,
   shipStayRecords,
+  type AlertMetric,
   type AlertResult,
   type AlertRule,
   type EventRecord,
