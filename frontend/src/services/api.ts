@@ -103,8 +103,13 @@ export async function updateAlertStatus(id: number, status: string) {
   return data;
 }
 
-export async function fetchUsers() {
-  const { data } = await api.get("/admin/users");
+export async function fetchUsers(params?: Record<string, string>) {
+  const { data } = await api.get("/admin/users", { params });
+  return data;
+}
+
+export async function updateUser(id: number, payload: Record<string, unknown>) {
+  const { data } = await api.patch(`/admin/users/${id}`, payload);
   return data;
 }
 

@@ -1147,8 +1147,43 @@ app.get("/api/events/:id/audit", requireAuth, async (req, res) => {
   res.json(audits);
 });
 
-app.get("/api/admin/users", requireAuth, (_req, res) => {
-  res.json(accounts.map(({ password: _password, ...account }) => account));
+const userUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  role: z.enum(["admin", "supervisor", "user"]).optional(),
+  position: z.string().optional(),
+  responsibleSeaAreas: z.array(z.string()).optional(),
+  dataScope: z.string().optional()
+});
+
+app.get("/api/admin/users", requireAuth, (req, res) => {
+  const seaArea = req.query.seaArea as string | undefined;
+  let filtered = [...accounts];
+  if (seaArea) {
+    filtered = filtered.filter((u) =>
+      u.responsibleSeaAreas.includes(seaArea) ||
+      u.responsibleSeaAreas.includes("全部海域")
+    );
+  }
+  res.json(filtered.map(({ password: _password, ...account }) => account));
+});
+
+app.patch("/api/admin/users/:id", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const user = accounts.find((u) => u.id === id);
+  if (!user) {
+    res.status(404).json({ message: "用户不存在" });
+    return;
+  }
+
+  const parsed = userUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "参数格式错误" });
+    return;
+  }
+
+  Object.assign(user, parsed.data);
+  const { password: _password, ...accountWithoutPassword } = user;
+  res.json(accountWithoutPassword);
 });
 
 app.get("/api/ships", requireAuth, (req, res) => {

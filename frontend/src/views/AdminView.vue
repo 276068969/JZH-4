@@ -3,11 +3,35 @@
     <div class="panel">
       <h2 class="panel-title">用户与权限</h2>
       <el-table v-loading="usersLoading" :data="users">
-        <el-table-column prop="username" label="用户名" />
-        <el-table-column prop="name" label="姓名" />
-        <el-table-column prop="role" label="角色">
+        <el-table-column prop="username" label="用户名" width="110" />
+        <el-table-column prop="name" label="姓名" width="100" />
+        <el-table-column prop="position" label="职位" width="140" />
+        <el-table-column prop="role" label="角色" width="100">
           <template #default="{ row }">
             <el-tag :type="roleTagType(row.role)">{{ roleLabel(row.role) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="责任海域" min-width="200">
+          <template #default="{ row }">
+            <div class="sea-area-tags">
+              <el-tag
+                v-for="area in row.responsibleSeaAreas"
+                :key="area"
+                size="small"
+                type="success"
+                effect="light"
+                style="margin-right: 4px; margin-bottom: 2px"
+              >
+                {{ area }}
+              </el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" size="small" link @click="openUserEditDialog(row)">
+              编辑
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -86,11 +110,56 @@
         </el-table-column>
       </el-table>
     </div>
+    <el-dialog v-model="userEditDialogVisible" title="编辑用户" width="520px">
+      <el-form :model="userEditForm" label-width="90px">
+        <el-form-item label="用户名">
+          <el-input v-model="editingUser.username" disabled />
+        </el-form-item>
+        <el-form-item label="姓名">
+          <el-input v-model="userEditForm.name" />
+        </el-form-item>
+        <el-form-item label="职位">
+          <el-input v-model="userEditForm.position" />
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-select v-model="userEditForm.role" style="width: 100%">
+            <el-option label="管理员" value="admin" />
+            <el-option label="监管人员" value="supervisor" />
+            <el-option label="普通用户" value="user" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="责任海域">
+          <el-select
+            v-model="userEditForm.responsibleSeaAreas"
+            multiple
+            filterable
+            placeholder="请选择责任海域"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="option in seaAreaOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数据范围">
+          <el-input v-model="userEditForm.dataScope" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="userEditDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="userEditSaving" @click="submitUserEdit">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   Bell,
@@ -105,12 +174,29 @@ import {
   CircleCheckFilled,
   CircleCloseFilled
 } from "@element-plus/icons-vue";
-import { fetchAlertRules, fetchUsers, toggleAlertRule } from "../services/api";
+import { fetchAlertRules, fetchSeaAreas, fetchUsers, toggleAlertRule, updateUser } from "../services/api";
 
 const users = ref<any[]>([]);
 const rules = ref<any[]>([]);
+const seaAreas = ref<any[]>([]);
 const usersLoading = ref(false);
 const rulesLoading = ref(false);
+
+const userEditDialogVisible = ref(false);
+const editingUser = ref<any>(null);
+const userEditForm = reactive({
+  name: "",
+  role: "",
+  position: "",
+  responsibleSeaAreas: [] as string[],
+  dataScope: ""
+});
+const userEditSaving = ref(false);
+
+const seaAreaOptions = computed(() => {
+  const baseOptions = seaAreas.value.map((a: any) => ({ label: a.name, value: a.name }));
+  return [{ label: "全部海域", value: "全部海域" }, ...baseOptions];
+});
 
 const enabledCount = computed(() => rules.value.filter((r) => r.enabled).length);
 
@@ -197,6 +283,49 @@ async function onRuleToggle(row: any) {
   }
 }
 
+function openUserEditDialog(row: any) {
+  editingUser.value = row;
+  userEditForm.name = row.name;
+  userEditForm.role = row.role;
+  userEditForm.position = row.position;
+  userEditForm.responsibleSeaAreas = [...(row.responsibleSeaAreas || [])];
+  userEditForm.dataScope = row.dataScope || "";
+  userEditDialogVisible.value = true;
+}
+
+async function submitUserEdit() {
+  if (!editingUser.value) return;
+  userEditSaving.value = true;
+  try {
+    const updated = await updateUser(editingUser.value.id, {
+      name: userEditForm.name,
+      role: userEditForm.role,
+      position: userEditForm.position,
+      responsibleSeaAreas: userEditForm.responsibleSeaAreas,
+      dataScope: userEditForm.dataScope
+    });
+    const idx = users.value.findIndex((u) => u.id === updated.id);
+    if (idx !== -1) {
+      users.value[idx] = { ...users.value[idx], ...updated };
+    }
+    userEditDialogVisible.value = false;
+    ElMessage.success("用户信息已更新");
+  } catch (err: unknown) {
+    const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "保存失败";
+    ElMessage.error(message);
+  } finally {
+    userEditSaving.value = false;
+  }
+}
+
+async function loadSeaAreas() {
+  try {
+    seaAreas.value = await fetchSeaAreas();
+  } catch {
+    /* ignore */
+  }
+}
+
 onMounted(async () => {
   usersLoading.value = true;
   rulesLoading.value = true;
@@ -204,6 +333,7 @@ onMounted(async () => {
     const [userData, ruleData] = await Promise.all([fetchUsers(), fetchAlertRules()]);
     users.value = userData;
     rules.value = ruleData.map((r: any) => ({ ...r, _loading: false }));
+    loadSeaAreas();
   } catch (err: unknown) {
     const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "加载数据失败";
     ElMessage.error(message);
@@ -275,5 +405,11 @@ onMounted(async () => {
 
 .status-disabled {
   color: #909399;
+}
+
+.sea-area-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
 }
 </style>

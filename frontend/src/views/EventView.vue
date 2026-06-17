@@ -118,7 +118,28 @@
     <el-dialog v-model="disposalDialogVisible" :title="disposalDialogTitle" width="480px">
       <el-form :model="disposalForm" label-width="86px">
         <el-form-item label="责任人" required>
-          <el-input v-model="disposalForm.responsiblePerson" placeholder="请输入责任人" />
+          <el-select
+            v-model="disposalForm.responsiblePerson"
+            placeholder="请选择责任人"
+            filterable
+            style="width: 100%"
+          >
+            <el-option
+              v-for="u in responsibleUserOptions"
+              :key="u.id"
+              :label="u.name"
+              :value="u.name"
+            >
+              <span style="float: left">{{ u.name }}</span>
+              <span style="float: right; color: #8492a6; font-size: 12px">
+                {{ u.position || u.role }}
+              </span>
+            </el-option>
+          </el-select>
+          <div v-if="responsibleUserOptions.length === 0" class="no-responsible-tip">
+            <el-icon color="#e6a23c"><WarningFilled /></el-icon>
+            该海域暂无匹配的责任人
+          </div>
         </el-form-item>
         <el-form-item label="处置说明" :required="disposalTargetStatus === 'resolved'">
           <el-input
@@ -164,9 +185,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
-import { createEvent, fetchEventAudit, fetchEvents, updateEventStatus } from "../services/api";
+import { WarningFilled } from "@element-plus/icons-vue";
+import { createEvent, fetchEventAudit, fetchEvents, fetchUsers, updateEventStatus } from "../services/api";
 
 interface EventRecord {
   id: number;
@@ -255,6 +277,20 @@ const disposalForm = reactive({
   responsiblePerson: "",
   disposalNote: ""
 });
+const responsibleUserOptions = ref<any[]>([]);
+const loadingResponsibleUsers = ref(false);
+
+async function loadResponsibleUsers(seaArea: string) {
+  loadingResponsibleUsers.value = true;
+  try {
+    const users = await fetchUsers({ seaArea });
+    responsibleUserOptions.value = users;
+  } catch {
+    responsibleUserOptions.value = [];
+  } finally {
+    loadingResponsibleUsers.value = false;
+  }
+}
 
 function levelLabel(level: string) {
   return { low: "低", medium: "中", high: "高" }[level] ?? level;
@@ -273,13 +309,16 @@ function statusType(status: string) {
 }
 
 const disposalDialogTitle = ref("");
-function openDisposalDialog(event: EventRecord, targetStatus: "processing" | "resolved") {
+async function openDisposalDialog(event: EventRecord, targetStatus: "processing" | "resolved") {
   disposalTargetEvent.value = event;
   disposalTargetStatus.value = targetStatus;
   disposalDialogTitle.value = targetStatus === "processing" ? "开始处理" : "事件办结";
   disposalForm.responsiblePerson = event.responsiblePerson || "";
   disposalForm.disposalNote = event.disposalNote || "";
   disposalDialogVisible.value = true;
+  if (event.seaArea) {
+    await loadResponsibleUsers(event.seaArea);
+  }
 }
 
 async function loadEvents() {
@@ -391,5 +430,14 @@ onMounted(loadEvents);
   color: #909399;
   font-size: 13px;
   margin-top: 2px;
+}
+
+.no-responsible-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #e6a23c;
 }
 </style>
