@@ -1,91 +1,97 @@
 <template>
-  <section class="panel">
-    <h2 class="panel-title">
-      事件监管
-      <el-button type="primary" @click="dialogVisible = true">上报事件</el-button>
-    </h2>
+  <section class="event-view">
+    <div class="event-main panel">
+      <h2 class="panel-title">
+        事件监管
+        <el-button type="primary" @click="dialogVisible = true">上报事件</el-button>
+      </h2>
 
-    <div class="filter-bar">
-      <el-select v-model="filters.category" placeholder="事件类型" clearable style="width: 140px">
-        <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
-      </el-select>
-      <el-select v-model="filters.level" placeholder="事件等级" clearable style="width: 120px">
-        <el-option label="高" value="high" />
-        <el-option label="中" value="medium" />
-        <el-option label="低" value="low" />
-      </el-select>
-      <el-select v-model="filters.status" placeholder="处置状态" clearable style="width: 120px">
-        <el-option label="已上报" value="reported" />
-        <el-option label="处理中" value="processing" />
-        <el-option label="已办结" value="resolved" />
-      </el-select>
-      <el-select v-model="filters.seaArea" placeholder="海域" clearable style="width: 160px">
-        <el-option v-for="a in seaAreaOptions" :key="a" :label="a" :value="a" />
-      </el-select>
-      <el-button @click="resetFilters">重置</el-button>
+      <div class="filter-bar">
+        <el-select v-model="filters.category" placeholder="事件类型" clearable style="width: 140px">
+          <el-option v-for="c in categoryOptions" :key="c" :label="c" :value="c" />
+        </el-select>
+        <el-select v-model="filters.level" placeholder="事件等级" clearable style="width: 120px">
+          <el-option label="高" value="high" />
+          <el-option label="中" value="medium" />
+          <el-option label="低" value="low" />
+        </el-select>
+        <el-select v-model="filters.status" placeholder="处置状态" clearable style="width: 120px">
+          <el-option label="已上报" value="reported" />
+          <el-option label="处理中" value="processing" />
+          <el-option label="已办结" value="resolved" />
+        </el-select>
+        <el-select v-model="filters.seaArea" placeholder="海域" clearable style="width: 160px">
+          <el-option v-for="a in seaAreaOptions" :key="a" :label="a" :value="a" />
+        </el-select>
+        <el-button @click="resetFilters">重置</el-button>
+      </div>
+
+      <el-table :data="events" stripe>
+        <el-table-column prop="id" label="编号" width="80" />
+        <el-table-column prop="title" label="事件标题" min-width="160" />
+        <el-table-column prop="category" label="类型" width="100" />
+        <el-table-column prop="seaArea" label="海域" min-width="120" />
+        <el-table-column prop="level" label="等级" width="80">
+          <template #default="{ row }">
+            <el-tag :type="levelType(row.level)">{{ levelLabel(row.level) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="source" label="来源" width="100" />
+        <el-table-column prop="responsiblePerson" label="责任人" width="100">
+          <template #default="{ row }">
+            {{ row.responsiblePerson || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="disposalNote" label="处置说明" min-width="160">
+          <template #default="{ row }">
+            {{ row.disposalNote || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="occurredAt" label="发生时间" width="150" />
+        <el-table-column prop="resolvedAt" label="办结时间" width="150">
+          <template #default="{ row }">
+            {{ row.resolvedAt || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="160" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'reported'"
+              type="warning"
+              size="small"
+              @click="openDisposalDialog(row, 'processing')"
+            >
+              处理
+            </el-button>
+            <el-button
+              v-if="row.status === 'processing'"
+              type="success"
+              size="small"
+              @click="openDisposalDialog(row, 'resolved')"
+            >
+              办结
+            </el-button>
+            <el-button
+              type="info"
+              size="small"
+              plain
+              @click="openAuditDialog(row)"
+            >
+              审计
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
 
-    <el-table :data="events" stripe>
-      <el-table-column prop="id" label="编号" width="80" />
-      <el-table-column prop="title" label="事件标题" min-width="160" />
-      <el-table-column prop="category" label="类型" width="100" />
-      <el-table-column prop="seaArea" label="海域" min-width="120" />
-      <el-table-column prop="level" label="等级" width="80">
-        <template #default="{ row }">
-          <el-tag :type="levelType(row.level)">{{ levelLabel(row.level) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="source" label="来源" width="100" />
-      <el-table-column prop="responsiblePerson" label="责任人" width="100">
-        <template #default="{ row }">
-          {{ row.responsiblePerson || '—' }}
-        </template>
-      </el-table-column>
-      <el-table-column prop="disposalNote" label="处置说明" min-width="160">
-        <template #default="{ row }">
-          {{ row.disposalNote || '—' }}
-        </template>
-      </el-table-column>
-      <el-table-column prop="status" label="状态" width="110">
-        <template #default="{ row }">
-          <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="occurredAt" label="发生时间" width="150" />
-      <el-table-column prop="resolvedAt" label="办结时间" width="150">
-        <template #default="{ row }">
-          {{ row.resolvedAt || '—' }}
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
-        <template #default="{ row }">
-          <el-button
-            v-if="row.status === 'reported'"
-            type="warning"
-            size="small"
-            @click="openDisposalDialog(row, 'processing')"
-          >
-            处理
-          </el-button>
-          <el-button
-            v-if="row.status === 'processing'"
-            type="success"
-            size="small"
-            @click="openDisposalDialog(row, 'resolved')"
-          >
-            办结
-          </el-button>
-          <el-button
-            type="info"
-            size="small"
-            plain
-            @click="openAuditDialog(row)"
-          >
-            审计
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="event-sidebar">
+      <SeaAreaRiskRank />
+    </div>
 
     <el-dialog v-model="dialogVisible" title="上报事件" width="460px">
       <el-form :model="form" label-width="86px">
@@ -198,6 +204,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { WarningFilled } from "@element-plus/icons-vue";
 import { createEvent, fetchEventAudit, fetchEvents, fetchUsers, updateEventStatus } from "../services/api";
+import SeaAreaRiskRank from "../components/SeaAreaRiskRank.vue";
 
 interface EventRecord {
   id: number;
@@ -415,6 +422,20 @@ onMounted(loadEvents);
 </script>
 
 <style scoped>
+.event-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+}
+
+.event-main {
+  min-width: 0;
+}
+
+.event-sidebar {
+  min-width: 0;
+}
+
 .filter-bar {
   display: flex;
   align-items: center;
@@ -475,5 +496,11 @@ onMounted(loadEvents);
   margin-left: 8px;
   font-size: 12px;
   color: #909399;
+}
+
+@media (max-width: 1200px) {
+  .event-view {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
