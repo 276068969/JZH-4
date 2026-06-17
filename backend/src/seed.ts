@@ -872,6 +872,12 @@ export interface MonitoringPointStats {
   offline: number;
 }
 
+export interface WaterQualityStats {
+  gradeDistribution: Record<string, number>;
+  primaryGrade: string;
+  worstGrade: string;
+}
+
 export interface EventStats {
   total: number;
   reported: number;
@@ -903,6 +909,7 @@ export interface SeaAreaRegulationStats {
   hasMonitoringPoints: boolean;
   hasActiveAlerts: boolean;
   monitoringPoints: MonitoringPointStats;
+  waterQuality: WaterQualityStats;
   events: EventStats;
   alerts: AlertStats;
 }

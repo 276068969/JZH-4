@@ -33,6 +33,7 @@ import {
   type SeaAreaRegulationStats,
   type RegulationStatsResponse,
   type MonitoringPointStats,
+  type WaterQualityStats,
   type EventStats,
   type AlertStats
 } from "./seed.js";
