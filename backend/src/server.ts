@@ -281,6 +281,103 @@ function buildEventStats(seaAreaName: string): EventStats {
   };
 }
 
+const WATER_QUALITY_ORDER = ["I 类", "II 类", "III 类", "IV 类", "V 类", "劣 V 类"];
+
+interface WaterQualityIssueLog {
+  timestamp: string;
+  seaArea: string;
+  realGrade: string;
+  estimatedGrade: string;
+  issue: string;
+}
+
+const waterQualityIssueLog: WaterQualityIssueLog[] = [];
+
+function logWaterQualityIssue(seaArea: string, realGrade: string, estimatedGrade: string, issue: string) {
+  const entry: WaterQualityIssueLog = {
+    timestamp: new Date().toISOString(),
+    seaArea,
+    realGrade,
+    estimatedGrade,
+    issue
+  };
+  waterQualityIssueLog.push(entry);
+  console.warn(
+    `[水质错级警告] 海域: ${seaArea}, 真实水质: ${realGrade}, 推算水质: ${estimatedGrade}, 问题: ${issue}`
+  );
+  if (waterQualityIssueLog.length > 100) {
+    waterQualityIssueLog.shift();
+  }
+}
+
+function waterQualityRank(grade: string): number {
+  const idx = WATER_QUALITY_ORDER.indexOf(grade);
+  return idx === -1 ? 99 : idx;
+}
+
+function getEstimatedWaterQualityGrade(mpStats: MonitoringPointStats): string {
+  if (mpStats.total === 0) return "—";
+  const offlineRatio = mpStats.offline / mpStats.total;
+  const warningRatio = mpStats.warning / mpStats.total;
+
+  if (offlineRatio > 0.3) return "劣 V 类";
+  if (offlineRatio > 0.15 || warningRatio > 0.4) return "IV 类";
+  if (warningRatio > 0.2) return "III 类";
+  if (warningRatio > 0.05) return "II 类";
+  return "I 类";
+}
+
+function buildWaterQualityStats(seaAreaName: string, mpStats: MonitoringPointStats): WaterQualityStats {
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
+  const points = validPoints.filter((p) => p.seaArea === seaAreaName);
+
+  if (points.length === 0) {
+    return {
+      gradeDistribution: {},
+      primaryGrade: "—",
+      worstGrade: "—"
+    };
+  }
+
+  const gradeDistribution: Record<string, number> = {};
+  for (const p of points) {
+    gradeDistribution[p.waterQuality] = (gradeDistribution[p.waterQuality] ?? 0) + 1;
+  }
+
+  let primaryGrade = points[0].waterQuality;
+  let maxCount = 0;
+  for (const [grade, count] of Object.entries(gradeDistribution)) {
+    if (count > maxCount || (count === maxCount && waterQualityRank(grade) > waterQualityRank(primaryGrade))) {
+      maxCount = count;
+      primaryGrade = grade;
+    }
+  }
+
+  const worstGrade = points.reduce(
+    (worst, p) => (waterQualityRank(p.waterQuality) > waterQualityRank(worst) ? p.waterQuality : worst),
+    points[0].waterQuality
+  );
+
+  const estimatedGrade = getEstimatedWaterQualityGrade(mpStats);
+  if (worstGrade !== estimatedGrade) {
+    const realRank = waterQualityRank(worstGrade);
+    const estRank = waterQualityRank(estimatedGrade);
+    let issue = "";
+    if (realRank < estRank) {
+      issue = `推算水质比真实水质差 ${estRank - realRank} 个等级（严重低估）`;
+    } else if (realRank > estRank) {
+      issue = `推算水质比真实水质好 ${realRank - estRank} 个等级（高估）`;
+    }
+    logWaterQualityIssue(seaAreaName, worstGrade, estimatedGrade, issue);
+  }
+
+  return {
+    gradeDistribution,
+    primaryGrade,
+    worstGrade
+  };
+}
+
 const pointTypeMetricsMap: Record<string, AlertMetric[]> = {
   水质浮标: ["water_quality", "status", "temperature"],
   排口监测: ["water_quality", "status", "temperature"],
@@ -333,6 +430,7 @@ function buildRegulationStats(): RegulationStatsResponse {
   const validPoints = sanitizeMonitoringPoints(monitoringPoints);
   const seaAreaStats: SeaAreaRegulationStats[] = seaAreas.map((area) => {
     const mpStats = buildMonitoringPointStats(area.name);
+    const wqStats = buildWaterQualityStats(area.name, mpStats);
     const alertStats = buildAlertStats(area.name);
     const hasMonitoringPoints = mpStats.total > 0;
     const hasActiveAlerts = alertStats.activeAlerts > 0;
@@ -345,6 +443,7 @@ function buildRegulationStats(): RegulationStatsResponse {
       hasMonitoringPoints,
       hasActiveAlerts,
       monitoringPoints: mpStats,
+      waterQuality: wqStats,
       events: buildEventStats(area.name),
       alerts: alertStats
     };
@@ -477,6 +576,13 @@ app.get("/api/dashboard/metrics", requireAuth, (_req, res) => {
 
 app.get("/api/regulation/stats", requireAuth, (_req, res) => {
   res.json(buildRegulationStats());
+});
+
+app.get("/api/regulation/water-quality-issues", requireAuth, (_req, res) => {
+  res.json({
+    total: waterQualityIssueLog.length,
+    issues: waterQualityIssueLog
+  });
 });
 
 app.get("/api/monitoring-points", requireAuth, (_req, res) => {

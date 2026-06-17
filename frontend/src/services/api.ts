@@ -175,6 +175,12 @@ export interface MonitoringPointStats {
   offline: number;
 }
 
+export interface WaterQualityStats {
+  gradeDistribution: Record<string, number>;
+  primaryGrade: string;
+  worstGrade: string;
+}
+
 export interface EventStats {
   total: number;
   reported: number;
@@ -206,6 +212,7 @@ export interface SeaAreaRegulationStats {
   hasMonitoringPoints: boolean;
   hasActiveAlerts: boolean;
   monitoringPoints: MonitoringPointStats;
+  waterQuality: WaterQualityStats;
   events: EventStats;
   alerts: AlertStats;
 }
@@ -225,5 +232,23 @@ export interface RegulationStatsResponse {
 
 export async function fetchRegulationStats(): Promise<RegulationStatsResponse> {
   const { data } = await api.get("/regulation/stats");
+  return data;
+}
+
+export interface WaterQualityIssue {
+  timestamp: string;
+  seaArea: string;
+  realGrade: string;
+  estimatedGrade: string;
+  issue: string;
+}
+
+export interface WaterQualityIssuesResponse {
+  total: number;
+  issues: WaterQualityIssue[];
+}
+
+export async function fetchWaterQualityIssues(): Promise<WaterQualityIssuesResponse> {
+  const { data } = await api.get("/regulation/water-quality-issues");
   return data;
 }

@@ -96,18 +96,6 @@ const sortOptions = [
   { key: "offline", label: "离线监测" }
 ];
 
-function getWaterQualityGrade(area: SeaAreaRegulationStats): string {
-  if (area.monitoringPoints.total === 0) return "—";
-  const offlineRatio = area.monitoringPoints.offline / area.monitoringPoints.total;
-  const warningRatio = area.monitoringPoints.warning / area.monitoringPoints.total;
-
-  if (offlineRatio > 0.3) return "劣 V 类";
-  if (offlineRatio > 0.15 || warningRatio > 0.4) return "IV 类";
-  if (warningRatio > 0.2) return "III 类";
-  if (warningRatio > 0.05) return "II 类";
-  return "I 类";
-}
-
 function waterQualityScore(grade: string): number {
   const scoreMap: Record<string, number> = {
     "I 类": 10,
@@ -133,7 +121,7 @@ function calculateRiskScore(area: SeaAreaRegulationStats): number {
     ? Math.min(100, (area.monitoringPoints.offline / totalPoints) * 100 + area.monitoringPoints.warning * 3)
     : 0;
 
-  const wqGrade = getWaterQualityGrade(area);
+  const wqGrade = area.waterQuality?.worstGrade ?? "—";
   const wqScore = waterQualityScore(wqGrade);
 
   const weights = {
@@ -195,7 +183,7 @@ const rankedSeaAreas = computed<RankedSeaArea[]>(() => {
       ...area,
       riskScore,
       riskLevel: getRiskLevel(riskScore),
-      waterQualityGrade: getWaterQualityGrade(area)
+      waterQualityGrade: area.waterQuality?.worstGrade ?? "—"
     };
   });
 
