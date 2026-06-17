@@ -23,6 +23,7 @@ import {
   type AlertRule,
   type EventRecord,
   type EventStatusAudit,
+  type MonitoringPoint,
   type Ship,
   type ShipPosition,
   type ShipPositionWithShipInfo,
@@ -99,6 +100,95 @@ const shipAnomalyStatusSchema = z.object({
   disposalNote: z.string().optional()
 });
 
+const WATER_QUALITY_GRADES = ["I 类", "II 类", "III 类", "IV 类", "V 类", "劣 V 类"] as const;
+const MONITORING_POINT_TYPES = ["水质浮标", "排口监测", "船舶监管", "气象监测"] as const;
+const MONITORING_POINT_STATUSES = ["normal", "warning", "offline"] as const;
+
+function isValidDatetimeString(val: string): boolean {
+  const regex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+  if (!regex.test(val)) return false;
+  const dt = new Date(val.replace(" ", "T"));
+  return !isNaN(dt.getTime());
+}
+
+function isNotFutureDatetime(val: string): boolean {
+  const dt = new Date(val.replace(" ", "T"));
+  return dt.getTime() <= Date.now();
+}
+
+const monitoringPointSchema = z.object({
+  name: z.string().min(2, "监测点名称至少2个字符").max(64, "监测点名称不超过64个字符"),
+  seaArea: z.string().min(2, "海域名称至少2个字符").max(128, "海域名称不超过128个字符"),
+  type: z.enum(MONITORING_POINT_TYPES, { message: "监测点类型必须是水质浮标、排口监测、船舶监管或气象监测" }),
+  latitude: z.number().min(-90, "纬度必须在 -90 到 90 之间").max(90, "纬度必须在 -90 到 90 之间"),
+  longitude: z.number().min(-180, "经度必须在 -180 到 180 之间").max(180, "经度必须在 -180 到 180 之间"),
+  status: z.enum(MONITORING_POINT_STATUSES, { message: "设备状态必须是 normal、warning 或 offline" }),
+  waterQuality: z.enum(WATER_QUALITY_GRADES, { message: "水质等级必须是 I 类 ~ V 类或劣 V 类" }),
+  windSpeed: z.number().min(0, "风速不能为负数").max(100, "风速不能超过100 m/s").default(0),
+  temperature: z.number().min(-20, "温度不能低于 -20℃").max(50, "温度不能高于 50℃").default(0),
+  updatedAt: z
+    .string()
+    .refine(isValidDatetimeString, "更新时间格式必须为 YYYY-MM-DD HH:mm")
+    .refine(isNotFutureDatetime, "更新时间不能是未来时间")
+    .optional()
+});
+
+function validateMonitoringPoint(point: MonitoringPoint): { valid: boolean; errors: string[]; sanitized: MonitoringPoint } {
+  const errors: string[] = [];
+  const sanitized = { ...point };
+
+  if (!sanitized.name || sanitized.name.length < 2) {
+    errors.push("监测点名称至少2个字符");
+  }
+  if (sanitized.name && sanitized.name.length > 64) {
+    errors.push("监测点名称不超过64个字符");
+  }
+
+  if (!sanitized.seaArea || sanitized.seaArea.length < 2) {
+    errors.push("海域名称至少2个字符");
+  }
+
+  if (!MONITORING_POINT_TYPES.includes(sanitized.type as typeof MONITORING_POINT_TYPES[number])) {
+    errors.push(`监测点类型 "${sanitized.type}" 不是合法类型`);
+  }
+
+  if (typeof sanitized.latitude !== "number" || sanitized.latitude < -90 || sanitized.latitude > 90) {
+    errors.push("纬度必须在 -90 到 90 之间");
+  }
+
+  if (typeof sanitized.longitude !== "number" || sanitized.longitude < -180 || sanitized.longitude > 180) {
+    errors.push("经度必须在 -180 到 180 之间");
+  }
+
+  if (!MONITORING_POINT_STATUSES.includes(sanitized.status as typeof MONITORING_POINT_STATUSES[number])) {
+    errors.push(`设备状态 "${sanitized.status}" 不是合法状态`);
+  }
+
+  if (!WATER_QUALITY_GRADES.includes(sanitized.waterQuality as typeof WATER_QUALITY_GRADES[number])) {
+    errors.push(`水质等级 "${sanitized.waterQuality}" 不是合法等级`);
+  }
+
+  if (typeof sanitized.windSpeed !== "number" || sanitized.windSpeed < 0 || sanitized.windSpeed > 100) {
+    errors.push("风速必须在 0 到 100 m/s 之间");
+  }
+
+  if (typeof sanitized.temperature !== "number" || sanitized.temperature < -20 || sanitized.temperature > 50) {
+    errors.push("温度必须在 -20℃ 到 50℃ 之间");
+  }
+
+  if (!isValidDatetimeString(sanitized.updatedAt)) {
+    errors.push("更新时间格式无效");
+  } else if (!isNotFutureDatetime(sanitized.updatedAt)) {
+    errors.push("更新时间不能是未来时间");
+  }
+
+  return { valid: errors.length === 0, errors, sanitized };
+}
+
+function sanitizeMonitoringPoints(points: MonitoringPoint[]): MonitoringPoint[] {
+  return points.filter((point) => validateMonitoringPoint(point).valid);
+}
+
 const intrusionStatusSchema = z.object({
   status: z.enum(["active", "resolved"]),
   disposalNote: z.string().optional()
@@ -114,8 +204,9 @@ function filterAlertsByEnabledRules(alerts: AlertResult[]): AlertResult[] {
 }
 
 function buildMetrics() {
-  const warningPoints = monitoringPoints.filter((point) => point.status === "warning").length;
-  const offlinePoints = monitoringPoints.filter((point) => point.status === "offline").length;
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
+  const warningPoints = validPoints.filter((point) => point.status === "warning").length;
+  const offlinePoints = validPoints.filter((point) => point.status === "offline").length;
   const openEvents = events.filter((event) => event.status !== "resolved").length;
   const filteredAlerts = filterAlertsByEnabledRules(alertResults);
   const activeAlerts = filteredAlerts.filter((r) => r.status === "active").length;
@@ -127,7 +218,7 @@ function buildMetrics() {
 
   return {
     seaAreas: 8,
-    monitoringPoints: monitoringPoints.length,
+    monitoringPoints: validPoints.length,
     warningPoints,
     offlinePoints,
     shipsOnline: activeShips,
@@ -142,7 +233,8 @@ function buildMetrics() {
 }
 
 function buildMonitoringPointStats(seaAreaName: string): MonitoringPointStats {
-  const points = monitoringPoints.filter((p) => p.seaArea === seaAreaName);
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
+  const points = validPoints.filter((p) => p.seaArea === seaAreaName);
   return {
     total: points.length,
     normal: points.filter((p) => p.status === "normal").length,
@@ -174,7 +266,8 @@ const pointTypeMetricsMap: Record<string, AlertMetric[]> = {
 function getRuleApplicablePointIds(rule: AlertRule): Set<number> {
   if (!rule.conditionStruct) return new Set();
   const metric = rule.conditionStruct.metric;
-  const applicablePointIds = monitoringPoints
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
+  const applicablePointIds = validPoints
     .filter((point) => {
       const metrics = pointTypeMetricsMap[point.type] ?? [];
       return metrics.includes(metric);
@@ -186,8 +279,9 @@ function getRuleApplicablePointIds(rule: AlertRule): Set<number> {
 function buildAlertStats(seaAreaName: string): AlertStats {
   const filteredAlerts = filterAlertsByEnabledRules(alertResults);
   const areaAlerts = filteredAlerts.filter((a) => a.seaArea === seaAreaName);
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
   const areaPointIds = new Set(
-    monitoringPoints.filter((p) => p.seaArea === seaAreaName).map((p) => p.id)
+    validPoints.filter((p) => p.seaArea === seaAreaName).map((p) => p.id)
   );
   const areaRules = alertRules.filter((r) => {
     if (!r.conditionStruct) return false;
@@ -211,6 +305,7 @@ function buildAlertStats(seaAreaName: string): AlertStats {
 }
 
 function buildRegulationStats(): RegulationStatsResponse {
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
   const seaAreaStats: SeaAreaRegulationStats[] = seaAreas.map((area) => {
     const mpStats = buildMonitoringPointStats(area.name);
     const alertStats = buildAlertStats(area.name);
@@ -239,7 +334,7 @@ function buildRegulationStats(): RegulationStatsResponse {
   return {
     summary: {
       totalSeaAreas: seaAreas.length,
-      totalMonitoringPoints: monitoringPoints.length,
+      totalMonitoringPoints: validPoints.length,
       totalEvents: events.length,
       totalAlertRules: alertRules.length,
       totalActiveAlerts: filteredAlerts.filter((a) => a.status === "active").length,
@@ -251,7 +346,8 @@ function buildRegulationStats(): RegulationStatsResponse {
 }
 
 function runAlertEvaluation() {
-  const newAlerts = evaluateAllRules(alertRules, monitoringPoints, alertResults);
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
+  const newAlerts = evaluateAllRules(alertRules, validPoints, alertResults);
   let nextId = alertResults.length > 0 ? Math.max(...alertResults.map((r) => r.id)) + 1 : 1;
   for (const alert of newAlerts) {
     alert.id = nextId++;
@@ -359,7 +455,8 @@ app.get("/api/regulation/stats", requireAuth, (_req, res) => {
 });
 
 app.get("/api/monitoring-points", requireAuth, (_req, res) => {
-  res.json(monitoringPoints);
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
+  res.json(validPoints);
 });
 
 app.get("/api/monitoring-points/:id/detail", requireAuth, (req, res) => {
@@ -368,6 +465,15 @@ app.get("/api/monitoring-points/:id/detail", requireAuth, (req, res) => {
 
   if (!point) {
     res.status(404).json({ message: "监测点不存在" });
+    return;
+  }
+
+  const validation = validateMonitoringPoint(point);
+  if (!validation.valid) {
+    res.status(500).json({
+      message: "监测点数据校验失败",
+      errors: validation.errors
+    });
     return;
   }
 
@@ -393,9 +499,111 @@ app.get("/api/monitoring-points/:id/detail", requireAuth, (req, res) => {
   });
 });
 
+app.post("/api/monitoring-points", requireAuth, (req, res) => {
+  const parsed = monitoringPointSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const errorMessages = parsed.error.issues.map((issue) => issue.message).join("；");
+    res.status(400).json({ message: `监测点数据校验失败：${errorMessages}` });
+    return;
+  }
+
+  const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+  const point: MonitoringPoint = {
+    id: Math.max(...monitoringPoints.map((p) => p.id), 0) + 1,
+    name: parsed.data.name,
+    seaArea: parsed.data.seaArea,
+    type: parsed.data.type,
+    latitude: parsed.data.latitude,
+    longitude: parsed.data.longitude,
+    status: parsed.data.status,
+    waterQuality: parsed.data.waterQuality,
+    windSpeed: parsed.data.windSpeed,
+    temperature: parsed.data.temperature,
+    updatedAt: parsed.data.updatedAt ?? now
+  };
+
+  monitoringPoints.push(point);
+
+  const seaArea = seaAreas.find((a) => a.name === point.seaArea);
+  if (seaArea && !seaArea.monitoringPointIds.includes(point.id)) {
+    seaArea.monitoringPointIds.push(point.id);
+  }
+
+  runAlertEvaluation();
+  res.status(201).json(point);
+});
+
+app.patch("/api/monitoring-points/:id", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const point = monitoringPoints.find((p) => p.id === id);
+
+  if (!point) {
+    res.status(404).json({ message: "监测点不存在" });
+    return;
+  }
+
+  const parsed = monitoringPointSchema.partial().safeParse(req.body);
+  if (!parsed.success) {
+    const errorMessages = parsed.error.issues.map((issue) => issue.message).join("；");
+    res.status(400).json({ message: `监测点数据校验失败：${errorMessages}` });
+    return;
+  }
+
+  const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+  const updates = { ...parsed.data };
+  delete (updates as Partial<MonitoringPoint>).updatedAt;
+
+  Object.assign(point, updates);
+  point.updatedAt = parsed.data.updatedAt ?? now;
+
+  if (parsed.data.seaArea) {
+    seaAreas.forEach((area) => {
+      const idx = area.monitoringPointIds.indexOf(id);
+      if (idx !== -1) {
+        area.monitoringPointIds.splice(idx, 1);
+      }
+    });
+    const newSeaArea = seaAreas.find((a) => a.name === parsed.data.seaArea);
+    if (newSeaArea && !newSeaArea.monitoringPointIds.includes(id)) {
+      newSeaArea.monitoringPointIds.push(id);
+    }
+  }
+
+  runAlertEvaluation();
+  res.json(point);
+});
+
+app.delete("/api/monitoring-points/:id", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const index = monitoringPoints.findIndex((p) => p.id === id);
+
+  if (index === -1) {
+    res.status(404).json({ message: "监测点不存在" });
+    return;
+  }
+
+  monitoringPoints.splice(index, 1);
+
+  seaAreas.forEach((area) => {
+    const idx = area.monitoringPointIds.indexOf(id);
+    if (idx !== -1) {
+      area.monitoringPointIds.splice(idx, 1);
+    }
+  });
+
+  for (let i = alertResults.length - 1; i >= 0; i--) {
+    if (alertResults[i].pointId === id) {
+      alertResults.splice(i, 1);
+    }
+  }
+
+  res.json({ message: "监测点已删除" });
+});
+
 app.get("/api/sea-areas", requireAuth, (_req, res) => {
+  const validPoints = sanitizeMonitoringPoints(monitoringPoints);
   const result = seaAreas.map((area) => {
-    const points = monitoringPoints.filter((p) => area.monitoringPointIds.includes(p.id));
+    const points = validPoints.filter((p) => area.monitoringPointIds.includes(p.id));
     return {
       ...area,
       monitoringPoints: points.map((p) => ({
