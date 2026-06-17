@@ -567,6 +567,15 @@ app.patch("/api/monitoring-points/:id", requireAuth, (req, res) => {
     return;
   }
 
+  const existingValidation = validateMonitoringPoint(point);
+  if (!existingValidation.valid) {
+    res.status(500).json({
+      message: "监测点存量数据校验失败，拒绝更新",
+      errors: existingValidation.errors
+    });
+    return;
+  }
+
   const parsed = monitoringPointSchema.partial().safeParse(req.body);
   if (!parsed.success) {
     const errorMessages = parsed.error.issues.map((issue) => issue.message).join("；");
@@ -1448,5 +1457,6 @@ export {
   getDaysInMonth,
   WATER_QUALITY_GRADES,
   MONITORING_POINT_TYPES,
-  MONITORING_POINT_STATUSES
+  MONITORING_POINT_STATUSES,
+  monitoringPoints
 };
