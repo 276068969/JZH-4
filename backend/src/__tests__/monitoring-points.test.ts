@@ -406,7 +406,7 @@ describe("监测点 API - 非法日期回归测试", () => {
       assert.ok(Array.isArray(res.body));
 
       for (const invalidId of INVALID_POINT_IDS) {
-        const found = res.body.find((p: any) => p.id === invalidId);
+        const found: any = res.body.find((p: any) => p.id === invalidId);
         assert.equal(found, undefined, `非法日期监测点 id=${invalidId} 不应该出现在列表返回中`);
       }
 
