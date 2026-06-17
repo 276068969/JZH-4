@@ -117,11 +117,16 @@
 
     <el-dialog v-model="disposalDialogVisible" :title="disposalDialogTitle" width="480px">
       <el-form :model="disposalForm" label-width="86px">
+        <el-form-item label="事件海域">
+          <el-tag type="success" effect="light">{{ disposalTargetEvent?.seaArea || '—' }}</el-tag>
+          <span class="sea-area-hint">（责任人按所属海域过滤）</span>
+        </el-form-item>
         <el-form-item label="责任人" required>
           <el-select
             v-model="disposalForm.responsiblePerson"
             placeholder="请选择责任人"
             filterable
+            v-loading="loadingResponsibleUsers"
             style="width: 100%"
           >
             <el-option
@@ -136,9 +141,13 @@
               </span>
             </el-option>
           </el-select>
-          <div v-if="responsibleUserOptions.length === 0" class="no-responsible-tip">
+          <div v-if="responsibleUserOptions.length === 0 && !loadingResponsibleUsers" class="no-responsible-tip">
             <el-icon color="#e6a23c"><WarningFilled /></el-icon>
             该海域暂无匹配的责任人
+          </div>
+          <div v-else-if="responsiblePersonCleared && !disposalForm.responsiblePerson" class="no-responsible-tip">
+            <el-icon color="#e6a23c"><WarningFilled /></el-icon>
+            原责任人不在该海域负责范围内，已清空，请重新选择
           </div>
         </el-form-item>
         <el-form-item label="处置说明" :required="disposalTargetStatus === 'resolved'">
@@ -279,12 +288,29 @@ const disposalForm = reactive({
 });
 const responsibleUserOptions = ref<any[]>([]);
 const loadingResponsibleUsers = ref(false);
+const responsiblePersonCleared = ref(false);
+
+function isValidResponsiblePerson(name: string): boolean {
+  if (!name) return true;
+  return responsibleUserOptions.value.some((u) => u.name === name);
+}
 
 async function loadResponsibleUsers(seaArea: string) {
   loadingResponsibleUsers.value = true;
+  responsiblePersonCleared.value = false;
   try {
     const users = await fetchUsers({ seaArea });
     responsibleUserOptions.value = users;
+    const current = disposalForm.responsiblePerson;
+    if (current && !isValidResponsiblePerson(current)) {
+      disposalForm.responsiblePerson = "";
+      responsiblePersonCleared.value = true;
+      ElMessage.warning({
+        message: `责任人「${current}」不在「${seaArea}」的负责范围内，已自动清空，请重新选择`,
+        showClose: true,
+        duration: 3500
+      });
+    }
   } catch {
     responsibleUserOptions.value = [];
   } finally {
@@ -338,7 +364,11 @@ async function submit() {
 
 async function submitDisposal() {
   if (!disposalForm.responsiblePerson.trim()) {
-    ElMessage.warning("请填写责任人");
+    ElMessage.warning("请选择责任人");
+    return;
+  }
+  if (!isValidResponsiblePerson(disposalForm.responsiblePerson)) {
+    ElMessage.warning("责任人不在该海域负责范围内，请重新选择");
     return;
   }
   if (disposalTargetStatus.value === "resolved" && !disposalForm.disposalNote.trim()) {
@@ -439,5 +469,11 @@ onMounted(loadEvents);
   margin-top: 6px;
   font-size: 12px;
   color: #e6a23c;
+}
+
+.sea-area-hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>
