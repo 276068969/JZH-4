@@ -104,14 +104,39 @@ const WATER_QUALITY_GRADES = ["I 类", "II 类", "III 类", "IV 类", "V 类", "
 const MONITORING_POINT_TYPES = ["水质浮标", "排口监测", "船舶监管", "气象监测"] as const;
 const MONITORING_POINT_STATUSES = ["normal", "warning", "offline"] as const;
 
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+}
+
+function getDaysInMonth(year: number, month: number): number {
+  const days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month === 2 && isLeapYear(year)) {
+    return 29;
+  }
+  return days[month - 1];
+}
+
 function isValidDatetimeString(val: string): boolean {
-  const regex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
-  if (!regex.test(val)) return false;
-  const dt = new Date(val.replace(" ", "T"));
-  return !isNaN(dt.getTime());
+  const regex = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/;
+  const match = val.match(regex);
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > getDaysInMonth(year, month)) return false;
+  if (hour < 0 || hour > 23) return false;
+  if (minute < 0 || minute > 59) return false;
+
+  return true;
 }
 
 function isNotFutureDatetime(val: string): boolean {
+  if (!isValidDatetimeString(val)) return false;
   const dt = new Date(val.replace(" ", "T"));
   return dt.getTime() <= Date.now();
 }
@@ -1395,11 +1420,33 @@ app.get("/api/ships/summary", requireAuth, (_req, res) => {
   res.json(summary);
 });
 
-app.listen(port, async () => {
-  await initDatabase();
-  if (isDbAvailable()) {
-    await syncEventsToMemory(events);
-  }
-  console.log(`Ocean regulation backend listening on http://localhost:${port}`);
-  console.log(`Event persistence: ${isDbAvailable() ? "DATABASE" : "IN-MEMORY (data lost on restart)"}`);
-});
+const isTestEnv =
+  process.env.NODE_ENV === "test" ||
+  process.env.VITEST ||
+  process.argv.some((arg) => arg.includes("--test")) ||
+  process.argv.some((arg) => arg.includes("vitest"));
+
+if (!isTestEnv) {
+  app.listen(port, async () => {
+    await initDatabase();
+    if (isDbAvailable()) {
+      await syncEventsToMemory(events);
+    }
+    console.log(`Ocean regulation backend listening on http://localhost:${port}`);
+    console.log(`Event persistence: ${isDbAvailable() ? "DATABASE" : "IN-MEMORY (data lost on restart)"}`);
+  });
+}
+
+export {
+  app,
+  monitoringPointSchema,
+  isValidDatetimeString,
+  isNotFutureDatetime,
+  validateMonitoringPoint,
+  sanitizeMonitoringPoints,
+  isLeapYear,
+  getDaysInMonth,
+  WATER_QUALITY_GRADES,
+  MONITORING_POINT_TYPES,
+  MONITORING_POINT_STATUSES
+};
