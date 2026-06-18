@@ -1,4 +1,6 @@
 import axios, { AxiosError } from "axios";
+import router from "../router";
+import { useAuthStore } from "../stores/auth";
 
 export const AuthErrorCode = {
   PARAMS_MISSING: "AUTH_PARAMS_MISSING",
@@ -48,6 +50,19 @@ api.interceptors.response.use(
     if (error.response?.data) {
       const { code, message, details } = error.response.data;
       if (code) {
+        if (
+          code === AuthErrorCode.TOKEN_MISSING ||
+          code === AuthErrorCode.TOKEN_EXPIRED ||
+          code === AuthErrorCode.TOKEN_INVALID
+        ) {
+          try {
+            const auth = useAuthStore();
+            auth.signOut();
+            router.push("/login").catch(() => {});
+          } catch {
+            // ignore store/router errors, only care about clearing state
+          }
+        }
         throw new AuthError(code, message, details);
       }
     }

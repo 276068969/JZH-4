@@ -209,6 +209,7 @@
 <script setup lang="ts">
 import * as echarts from "echarts";
 import { Loading } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
 import L from "leaflet";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
@@ -490,6 +491,13 @@ async function openPointDetail(pointId: number) {
   drawerVisible.value = true;
   try {
     detailData.value = await fetchMonitoringPointDetail(pointId);
+  } catch (error) {
+    detailData.value = null;
+    if (error && (error as any).name === "AuthError") {
+      // Auth interceptor handles redirect
+    } else {
+      ElMessage.error("加载监测点详情失败");
+    }
   } finally {
     detailLoading.value = false;
   }
@@ -566,18 +574,31 @@ function renderChart() {
 }
 
 async function loadAllData() {
-  const [metricData, pointData, alertsData, summaryData, eventsData] = await Promise.all([
+  const [metricRes, pointRes, alertsRes, summaryRes, eventsRes] = await Promise.allSettled([
     fetchMetrics(),
     fetchMonitoringPoints(),
     fetchAlerts({ status: "active" }),
     fetchAlertsSummary(),
     fetchEvents()
   ]);
-  metrics.value = metricData;
-  points.value = pointData;
-  activeAlerts.value = alertsData;
-  alertSummary.value = summaryData;
-  events.value = eventsData;
+  if (metricRes.status === "fulfilled") metrics.value = metricRes.value;
+  if (pointRes.status === "fulfilled") points.value = pointRes.value;
+  if (alertsRes.status === "fulfilled") activeAlerts.value = alertsRes.value;
+  if (summaryRes.status === "fulfilled") alertSummary.value = summaryRes.value;
+  if (eventsRes.status === "fulfilled") events.value = eventsRes.value;
+
+  const firstAuthError = [metricRes, pointRes, alertsRes, summaryRes, eventsRes]
+    .map((r) => (r.status === "rejected" ? r.reason : null))
+    .find((e) => e && (e as any).name === "AuthError");
+  if (firstAuthError) {
+    throw firstAuthError;
+  }
+  const firstError = [metricRes, pointRes, alertsRes, summaryRes, eventsRes]
+    .map((r) => (r.status === "rejected" ? r.reason : null))
+    .find((e) => e);
+  if (firstError) {
+    ElMessage.error("部分数据加载失败，可点击刷新重试");
+  }
 }
 
 watch(activeFilter, () => {
@@ -604,12 +625,29 @@ const handleStorageChange = (e: StorageEvent) => {
 };
 
 onMounted(async () => {
-  await loadAllData();
-  await nextTick();
-  renderMap();
-  renderChart();
+  try {
+    await loadAllData();
+  } catch (error) {
+    if (error && (error as any).name === "AuthError") {
+      return;
+    }
+    ElMessage.error("首屏数据加载失败，可点击刷新重试");
+  }
+  try {
+    await nextTick();
+    renderMap();
+    renderChart();
+  } catch {
+    // ignore render errors on first paint
+  }
 
-  refreshTimer = setInterval(loadAllData, 30000);
+  refreshTimer = setInterval(async () => {
+    try {
+      await loadAllData();
+    } catch {
+      // ignore periodic load errors; user can manually refresh
+    }
+  }, 30000);
   window.addEventListener("storage", handleStorageChange);
 });
 

@@ -61,7 +61,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue"
 import {
   fetchMonitoringPointTrend,
   type MonitoringPointTrendResponse,
-  type MonitoringTrendSeries
+  type MonitoringTrendSeries,
+  AuthError
 } from "../services/api";
 
 const props = defineProps<{ pointId: number }>();
@@ -110,118 +111,198 @@ function findSeries(metric: string): MonitoringTrendSeries | undefined {
   return trendData.value?.series.find((s) => s.metric === metric);
 }
 
+function attachResizeObserver() {
+  if (!resizeObserver) return;
+  try {
+    if (waterChartRef.value) resizeObserver.observe(waterChartRef.value);
+    if (weatherChartRef.value) resizeObserver.observe(weatherChartRef.value);
+  } catch {
+    // ignore observe errors
+  }
+}
+
+function ensureChartInstance(
+  refEl: HTMLDivElement | null,
+  existing: echarts.ECharts | null
+): echarts.ECharts | null {
+  if (!refEl) return null;
+  if (existing) {
+    const dom = existing.getDom();
+    if (dom === refEl && document.body.contains(dom)) {
+      return existing;
+    }
+    try {
+      existing.dispose();
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    return echarts.init(refEl);
+  } catch {
+    return null;
+  }
+}
+
 function renderCharts() {
   if (!trendData.value) return;
   const wqSeries = findSeries("waterQuality");
   const windSeries = findSeries("windSpeed");
   const tempSeries = findSeries("temperature");
   if (!wqSeries || !windSeries || !tempSeries) return;
+  if (wqSeries.points.length === 0) return;
 
   const dates = wqSeries.points.map((p) => p.timestamp.slice(5));
-  const wqRanks = wqSeries.points.map((p) => p.rank ?? 0);
-  const winds = windSeries.points.map((p) => Number(p.value));
-  const temps = tempSeries.points.map((p) => Number(p.value));
+  const wqRanks = wqSeries.points.map((p) => {
+    const r = p.rank;
+    return typeof r === "number" && Number.isFinite(r)
+      ? Math.max(0, Math.min(WATER_QUALITY_GRADES.length - 1, r))
+      : 0;
+  });
+  const winds = windSeries.points.map((p) => {
+    const v = Number(p.value);
+    return Number.isFinite(v) ? v : 0;
+  });
+  const temps = tempSeries.points.map((p) => {
+    const v = Number(p.value);
+    return Number.isFinite(v) ? v : 0;
+  });
 
-  if (waterChartRef.value) {
-    if (!waterChart) waterChart = echarts.init(waterChartRef.value);
-    waterChart.setOption({
-      tooltip: {
-        trigger: "axis",
-        formatter: (params: any) => {
-          const item = Array.isArray(params) ? params[0] : params;
-          const rank = item.value as number;
-          return `${item.axisValue}<br/>水质等级：<strong>${WATER_QUALITY_GRADES[rank] ?? "—"}</strong>`;
-        }
-      },
-      grid: { left: 44, right: 16, top: 12, bottom: 28 },
-      xAxis: {
-        type: "category",
-        data: dates,
-        boundaryGap: false,
-        axisLabel: { fontSize: 10, hideOverlap: true }
-      },
-      yAxis: {
-        type: "value",
-        min: 0,
-        max: WATER_QUALITY_GRADES.length - 1,
-        interval: 1,
-        inverse: true,
-        axisLabel: {
-          fontSize: 10,
-          formatter: (v: number) => WATER_QUALITY_GRADES[Math.round(v)] ?? ""
-        }
-      },
-      series: [
-        {
-          name: "水质等级",
-          type: "line",
-          step: "middle",
-          data: wqRanks,
-          symbol: "circle",
-          symbolSize: 5,
-          lineStyle: { color: "#be185d", width: 2 },
-          itemStyle: { color: "#be185d" },
-          areaStyle: { color: "rgba(190,24,93,0.1)" }
-        }
-      ]
-    });
+  try {
+    if (waterChartRef.value) {
+      waterChart = ensureChartInstance(waterChartRef.value, waterChart);
+      if (waterChart) {
+        waterChart.setOption(
+          {
+            tooltip: {
+              trigger: "axis",
+              formatter: (params: any) => {
+                try {
+                  const item = Array.isArray(params) ? params[0] : params;
+                  if (!item) return "";
+                  const rank = Number(item.value);
+                  const grade = Number.isFinite(rank) ? WATER_QUALITY_GRADES[Math.round(rank)] : undefined;
+                  return `${item.axisValue ?? ""}<br/>水质等级：<strong>${grade ?? "—"}</strong>`;
+                } catch {
+                  return "";
+                }
+              }
+            },
+            grid: { left: 44, right: 16, top: 12, bottom: 28 },
+            xAxis: {
+              type: "category",
+              data: dates,
+              boundaryGap: false,
+              axisLabel: { fontSize: 10, hideOverlap: true }
+            },
+            yAxis: {
+              type: "value",
+              min: 0,
+              max: WATER_QUALITY_GRADES.length - 1,
+              interval: 1,
+              inverse: true,
+              axisLabel: {
+                fontSize: 10,
+                formatter: (v: number) => {
+                  const grade = WATER_QUALITY_GRADES[Math.round(Number(v))];
+                  return grade ?? "";
+                }
+              }
+            },
+            series: [
+              {
+                name: "水质等级",
+                type: "line",
+                step: "middle",
+                data: wqRanks,
+                symbol: "circle",
+                symbolSize: 5,
+                lineStyle: { color: "#be185d", width: 2 },
+                itemStyle: { color: "#be185d" },
+                areaStyle: { color: "rgba(190,24,93,0.1)" }
+              }
+            ]
+          },
+          true
+        );
+      }
+    }
+  } catch {
+    // ignore chart render errors
   }
 
-  if (weatherChartRef.value) {
-    if (!weatherChart) weatherChart = echarts.init(weatherChartRef.value);
-    weatherChart.setOption({
-      tooltip: { trigger: "axis" },
-      legend: {
-        data: ["风速", "温度"],
-        top: 0,
-        right: 8,
-        textStyle: { fontSize: 11 }
-      },
-      grid: { left: 40, right: 44, top: 28, bottom: 28 },
-      xAxis: {
-        type: "category",
-        data: dates,
-        boundaryGap: false,
-        axisLabel: { fontSize: 10, hideOverlap: true }
-      },
-      yAxis: [
-        {
-          type: "value",
-          name: "m/s",
-          nameTextStyle: { fontSize: 10 },
-          axisLabel: { fontSize: 10 },
-          splitLine: { show: true, lineStyle: { type: "dashed", color: "#eef2f7" } }
-        },
-        {
-          type: "value",
-          name: "°C",
-          nameTextStyle: { fontSize: 10 },
-          axisLabel: { fontSize: 10 },
-          splitLine: { show: false }
-        }
-      ],
-      series: [
-        {
-          name: "风速",
-          type: "line",
-          smooth: true,
-          data: winds,
-          yAxisIndex: 0,
-          symbol: "none",
-          color: "#0ea5e9",
-          areaStyle: { color: "rgba(14,165,233,0.1)" }
-        },
-        {
-          name: "温度",
-          type: "line",
-          smooth: true,
-          data: temps,
-          yAxisIndex: 1,
-          symbol: "none",
-          color: "#f97316"
-        }
-      ]
-    });
+  try {
+    if (weatherChartRef.value) {
+      weatherChart = ensureChartInstance(weatherChartRef.value, weatherChart);
+      if (weatherChart) {
+        weatherChart.setOption(
+          {
+            tooltip: { trigger: "axis" },
+            legend: {
+              data: ["风速", "温度"],
+              top: 0,
+              right: 8,
+              textStyle: { fontSize: 11 }
+            },
+            grid: { left: 40, right: 44, top: 28, bottom: 28 },
+            xAxis: {
+              type: "category",
+              data: dates,
+              boundaryGap: false,
+              axisLabel: { fontSize: 10, hideOverlap: true }
+            },
+            yAxis: [
+              {
+                type: "value",
+                name: "m/s",
+                nameTextStyle: { fontSize: 10 },
+                axisLabel: { fontSize: 10 },
+                splitLine: { show: true, lineStyle: { type: "dashed", color: "#eef2f7" } }
+              },
+              {
+                type: "value",
+                name: "°C",
+                nameTextStyle: { fontSize: 10 },
+                axisLabel: { fontSize: 10 },
+                splitLine: { show: false }
+              }
+            ],
+            series: [
+              {
+                name: "风速",
+                type: "line",
+                smooth: true,
+                data: winds,
+                yAxisIndex: 0,
+                symbol: "none",
+                color: "#0ea5e9",
+                areaStyle: { color: "rgba(14,165,233,0.1)" }
+              },
+              {
+                name: "温度",
+                type: "line",
+                smooth: true,
+                data: temps,
+                yAxisIndex: 1,
+                symbol: "none",
+                color: "#f97316"
+              }
+            ]
+          },
+          true
+        );
+      }
+    }
+  } catch {
+    // ignore chart render errors
+  }
+
+  attachResizeObserver();
+  try {
+    waterChart?.resize();
+    weatherChart?.resize();
+  } catch {
+    // ignore
   }
 }
 
@@ -232,9 +313,17 @@ async function loadTrend() {
     trendData.value = await fetchMonitoringPointTrend(props.pointId, range.value);
     await nextTick();
     renderCharts();
-  } catch {
-    ElMessage.error("加载监测趋势数据失败");
+    setTimeout(() => renderCharts(), 50);
+    setTimeout(() => renderCharts(), 250);
+  } catch (error) {
     trendData.value = null;
+    if (!(error instanceof AuthError)) {
+      try {
+        ElMessage.error("加载监测趋势数据失败");
+      } catch {
+        // ignore
+      }
+    }
   } finally {
     loading.value = false;
   }
@@ -245,14 +334,25 @@ watch(
   () => loadTrend()
 );
 
+watch(
+  () => trendData.value,
+  async () => {
+    if (!trendData.value) return;
+    await nextTick();
+    renderCharts();
+  }
+);
+
 onMounted(() => {
-  loadTrend();
   resizeObserver = new ResizeObserver(() => {
-    waterChart?.resize();
-    weatherChart?.resize();
+    try {
+      waterChart?.resize();
+      weatherChart?.resize();
+    } catch {
+      // ignore resize errors
+    }
   });
-  if (waterChartRef.value) resizeObserver.observe(waterChartRef.value);
-  if (weatherChartRef.value) resizeObserver.observe(weatherChartRef.value);
+  loadTrend();
 });
 
 onBeforeUnmount(() => {
