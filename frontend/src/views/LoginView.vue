@@ -23,6 +23,7 @@ import { reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { useAuthStore } from "../stores/auth";
+import { AuthError, AuthErrorCode } from "../services/api";
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -32,13 +33,36 @@ const form = reactive({
   password: "admin123"
 });
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof AuthError) {
+    switch (error.code) {
+      case AuthErrorCode.PARAMS_MISSING:
+        return error.message || "请输入用户名和密码";
+      case AuthErrorCode.ACCOUNT_NOT_FOUND:
+        return error.message || "账号不存在，请检查用户名";
+      case AuthErrorCode.PASSWORD_WRONG:
+        return error.message || "密码错误，请重试";
+      case AuthErrorCode.TOKEN_MISSING:
+        return error.message || "未提供认证令牌";
+      case AuthErrorCode.TOKEN_INVALID:
+        return error.message || "令牌无效，请重新登录";
+      case AuthErrorCode.TOKEN_EXPIRED:
+        return error.message || "登录已过期，请重新登录";
+      default:
+        return error.message || "登录失败，请稍后重试";
+    }
+  }
+  return "登录失败，请检查账号密码";
+}
+
 async function submit() {
   loading.value = true;
   try {
     await auth.signIn(form.username, form.password);
+    ElMessage.success("登录成功");
     await router.push("/dashboard");
-  } catch {
-    ElMessage.error("登录失败，请检查账号密码");
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error));
   } finally {
     loading.value = false;
   }

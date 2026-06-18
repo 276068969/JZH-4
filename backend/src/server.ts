@@ -44,6 +44,31 @@ const app = express();
 const port = Number(process.env.PORT ?? 8080);
 const jwtSecret = process.env.JWT_SECRET ?? "development-secret";
 
+const AuthErrorCode = {
+  PARAMS_MISSING: "AUTH_PARAMS_MISSING",
+  ACCOUNT_NOT_FOUND: "AUTH_ACCOUNT_NOT_FOUND",
+  PASSWORD_WRONG: "AUTH_PASSWORD_WRONG",
+  TOKEN_MISSING: "AUTH_TOKEN_MISSING",
+  TOKEN_INVALID: "AUTH_TOKEN_INVALID",
+  TOKEN_EXPIRED: "AUTH_TOKEN_EXPIRED"
+} as const;
+
+type AuthErrorCodeType = typeof AuthErrorCode[keyof typeof AuthErrorCode];
+
+interface ErrorResponse {
+  code: AuthErrorCodeType | string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+function sendError(res: express.Response, status: number, code: AuthErrorCodeType | string, message: string, details?: Record<string, unknown>) {
+  res.status(status).json({
+    code,
+    message,
+    details
+  } as ErrorResponse);
+}
+
 app.use(cors());
 app.use(express.json());
 
@@ -488,15 +513,21 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
   const token = authHeader?.replace("Bearer ", "");
 
   if (!token) {
-    res.status(401).json({ message: "未登录或登录已过期" });
+    sendError(res, 401, AuthErrorCode.TOKEN_MISSING, "未提供认证令牌，请重新登录");
     return;
   }
 
   try {
     res.locals.user = jwt.verify(token, jwtSecret);
     next();
-  } catch {
-    res.status(401).json({ message: "令牌无效" });
+  } catch (err) {
+    if (err instanceof jwt.TokenExpiredError) {
+      sendError(res, 401, AuthErrorCode.TOKEN_EXPIRED, "登录已过期，请重新登录");
+    } else if (err instanceof jwt.JsonWebTokenError) {
+      sendError(res, 401, AuthErrorCode.TOKEN_INVALID, "令牌无效，请重新登录");
+    } else {
+      sendError(res, 401, AuthErrorCode.TOKEN_INVALID, "认证失败，请重新登录");
+    }
   }
 }
 
@@ -530,16 +561,31 @@ app.get("/api/health/persistence", async (_req, res) => {
 app.post("/api/auth/login", (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ message: "用户名和密码不能为空" });
+    const missingFields: string[] = [];
+    for (const issue of parsed.error.issues) {
+      if (issue.path.includes("username")) {
+        missingFields.push("用户名");
+      }
+      if (issue.path.includes("password")) {
+        missingFields.push("密码");
+      }
+    }
+    sendError(res, 400, AuthErrorCode.PARAMS_MISSING, 
+      missingFields.length > 0 ? `${missingFields.join("、")}不能为空` : "请求参数不完整",
+      { missingFields }
+    );
     return;
   }
 
-  const account = accounts.find(
-    (item) => item.username === parsed.data.username && item.password === parsed.data.password
-  );
+  const account = accounts.find((item) => item.username === parsed.data.username);
 
   if (!account) {
-    res.status(401).json({ message: "用户名或密码错误" });
+    sendError(res, 401, AuthErrorCode.ACCOUNT_NOT_FOUND, "账号不存在，请检查用户名");
+    return;
+  }
+
+  if (account.password !== parsed.data.password) {
+    sendError(res, 401, AuthErrorCode.PASSWORD_WRONG, "密码错误，请重试");
     return;
   }
 

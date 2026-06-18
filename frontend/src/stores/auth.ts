@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { login } from "../services/api";
+import { login, AuthError } from "../services/api";
 
 export interface UserProfile {
   id: number;
@@ -18,11 +18,19 @@ export const useAuthStore = defineStore("auth", {
   }),
   actions: {
     async signIn(username: string, password: string) {
-      const data = await login(username, password);
-      this.token = data.token;
-      this.user = data.user;
-      localStorage.setItem("ocean_token", data.token);
-      localStorage.setItem("ocean_user", JSON.stringify(data.user));
+      try {
+        const data = await login(username, password);
+        this.token = data.token;
+        this.user = data.user;
+        localStorage.setItem("ocean_token", data.token);
+        localStorage.setItem("ocean_user", JSON.stringify(data.user));
+        return data;
+      } catch (error) {
+        if (error instanceof AuthError) {
+          throw error;
+        }
+        throw new AuthError("UNKNOWN_ERROR", "登录失败，请稍后重试");
+      }
     },
     signOut() {
       this.token = "";

@@ -1,4 +1,33 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
+
+export const AuthErrorCode = {
+  PARAMS_MISSING: "AUTH_PARAMS_MISSING",
+  ACCOUNT_NOT_FOUND: "AUTH_ACCOUNT_NOT_FOUND",
+  PASSWORD_WRONG: "AUTH_PASSWORD_WRONG",
+  TOKEN_MISSING: "AUTH_TOKEN_MISSING",
+  TOKEN_INVALID: "AUTH_TOKEN_INVALID",
+  TOKEN_EXPIRED: "AUTH_TOKEN_EXPIRED"
+} as const;
+
+export type AuthErrorCodeType = typeof AuthErrorCode[keyof typeof AuthErrorCode];
+
+export interface AuthErrorResponse {
+  code: AuthErrorCodeType | string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export class AuthError extends Error {
+  code: AuthErrorCodeType | string;
+  details?: Record<string, unknown>;
+
+  constructor(code: AuthErrorCodeType | string, message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.name = "AuthError";
+    this.code = code;
+    this.details = details;
+  }
+}
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? "/api",
@@ -12,6 +41,19 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError<AuthErrorResponse>) => {
+    if (error.response?.data) {
+      const { code, message, details } = error.response.data;
+      if (code) {
+        throw new AuthError(code, message, details);
+      }
+    }
+    throw error;
+  }
+);
 
 export async function login(username: string, password: string) {
   const { data } = await api.post("/auth/login", { username, password });
