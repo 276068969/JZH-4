@@ -677,6 +677,195 @@ app.get("/api/monitoring-points/:id/detail", requireAuth, (req, res) => {
   });
 });
 
+const TREND_RANGES = ["7d", "30d", "90d"] as const;
+type TrendRange = (typeof TREND_RANGES)[number];
+const TREND_RANGE_DAYS: Record<TrendRange, number> = { "7d": 7, "30d": 30, "90d": 90 };
+
+function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function formatTrendDate(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function parseUpdatedAtToDate(updatedAt: string): Date {
+  const [datePart, timePart] = updatedAt.split(" ");
+  const [y, mo, d] = datePart.split("-").map(Number);
+  const [h, mi] = (timePart ?? "00:00").split(":").map(Number);
+  return new Date(y, (mo ?? 1) - 1, d ?? 1, h ?? 0, mi ?? 0);
+}
+
+interface TrendPoint {
+  timestamp: string;
+  value: number | string;
+  rank?: number;
+}
+
+interface TrendSeries {
+  metric: string;
+  unit: string;
+  points: TrendPoint[];
+}
+
+interface TrendAssessment {
+  waterQualityTrend: string;
+  windSpeedTrend: string;
+  temperatureTrend: string;
+  summary: string;
+}
+
+interface MonitoringPointTrendResponse {
+  pointId: number;
+  range: string;
+  from: string;
+  to: string;
+  granularity: string;
+  series: TrendSeries[];
+  assessment: TrendAssessment;
+}
+
+function buildMonitoringPointTrend(point: MonitoringPoint, range: string): MonitoringPointTrendResponse {
+  const days = TREND_RANGE_DAYS[range as TrendRange] ?? TREND_RANGE_DAYS["7d"];
+  const rng = mulberry32(point.id * 100003 + days * 97);
+  const endDate = parseUpdatedAtToDate(point.updatedAt);
+
+  const dates: string[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(endDate);
+    d.setDate(d.getDate() - i);
+    dates.push(formatTrendDate(d));
+  }
+
+  const currentRank = waterQualityRank(point.waterQuality);
+  const currentWind = point.windSpeed;
+  const currentTemp = point.temperature;
+  const isAbnormal = point.status !== "normal";
+  const driftScale = point.status === "offline" ? 2.4 : 1.4;
+
+  const wqRanks: number[] = [];
+  const winds: number[] = [];
+  const temps: number[] = [];
+
+  for (let i = 0; i < days; i++) {
+    const progress = days > 1 ? i / (days - 1) : 1;
+    const wqDrift = isAbnormal ? (1 - progress) * driftScale : 0;
+    let rank = Math.round(currentRank - wqDrift + (rng() - 0.5) * (isAbnormal ? 0.8 : 1.2));
+    rank = clampNumber(rank, 0, WATER_QUALITY_ORDER.length - 1);
+    wqRanks.push(rank);
+
+    const windBase = currentWind - (isAbnormal ? (1 - progress) * Math.max(currentWind * 0.35, 0.6) : 0);
+    const wind = clampNumber(Number((windBase + (rng() - 0.5) * 2.2).toFixed(1)), 0, 100);
+    winds.push(wind);
+
+    const tempBase = currentTemp - (isAbnormal ? (1 - progress) * 2.4 : 0);
+    const temp = clampNumber(Number((tempBase + (rng() - 0.5) * 1.6).toFixed(1)), -20, 50);
+    temps.push(temp);
+  }
+
+  wqRanks[days - 1] = currentRank;
+  winds[days - 1] = currentWind;
+  temps[days - 1] = currentTemp;
+
+  const waterQualitySeries: TrendSeries = {
+    metric: "waterQuality",
+    unit: "",
+    points: wqRanks.map((rank, i) => ({ timestamp: dates[i], value: WATER_QUALITY_ORDER[rank], rank }))
+  };
+  const windSpeedSeries: TrendSeries = {
+    metric: "windSpeed",
+    unit: "m/s",
+    points: winds.map((w, i) => ({ timestamp: dates[i], value: w }))
+  };
+  const temperatureSeries: TrendSeries = {
+    metric: "temperature",
+    unit: "°C",
+    points: temps.map((t, i) => ({ timestamp: dates[i], value: t }))
+  };
+
+  const startRank = wqRanks[0];
+  const endRank = wqRanks[days - 1];
+  const waterQualityTrend = endRank > startRank ? "worsening" : endRank < startRank ? "improving" : "stable";
+
+  const startWind = winds[0];
+  const endWind = winds[days - 1];
+  const windSpeedTrend = endWind > startWind * 1.1 ? "rising" : endWind < startWind * 0.9 ? "falling" : "stable";
+
+  const startTemp = temps[0];
+  const endTemp = temps[days - 1];
+  const temperatureTrend = endTemp > startTemp + 1 ? "rising" : endTemp < startTemp - 1 ? "falling" : "stable";
+
+  const parts: string[] = [];
+  if (waterQualityTrend === "worsening") {
+    parts.push(`水质由 ${WATER_QUALITY_ORDER[startRank]} 恶化至 ${WATER_QUALITY_ORDER[endRank]}`);
+  } else if (waterQualityTrend === "improving") {
+    parts.push(`水质由 ${WATER_QUALITY_ORDER[startRank]} 改善至 ${WATER_QUALITY_ORDER[endRank]}`);
+  }
+  if (windSpeedTrend === "rising") parts.push("风速呈上升趋势");
+  else if (windSpeedTrend === "falling") parts.push("风速呈下降趋势");
+  if (temperatureTrend === "rising") parts.push("温度呈上升趋势");
+  else if (temperatureTrend === "falling") parts.push("温度呈下降趋势");
+
+  const worsening = waterQualityTrend === "worsening" || windSpeedTrend === "rising" || temperatureTrend === "rising";
+  const summary = parts.length === 0
+    ? `近 ${days} 天各项监测指标基本平稳，未见明显异常波动。`
+    : `近 ${days} 天${parts.join("，")}。${worsening ? "呈持续恶化趋势，建议重点关注并研判海域异常是否持续恶化。" : "请结合现场情况综合研判。"}`;
+
+  return {
+    pointId: point.id,
+    range,
+    from: dates[0],
+    to: dates[dates.length - 1],
+    granularity: "daily",
+    series: [waterQualitySeries, windSpeedSeries, temperatureSeries],
+    assessment: {
+      waterQualityTrend,
+      windSpeedTrend,
+      temperatureTrend,
+      summary
+    }
+  };
+}
+
+app.get("/api/monitoring-points/:id/trend", requireAuth, (req, res) => {
+  const id = Number(req.params.id);
+  const point = monitoringPoints.find((p) => p.id === id);
+
+  if (!point) {
+    res.status(404).json({ message: "监测点不存在" });
+    return;
+  }
+
+  const validation = validateMonitoringPoint(point);
+  if (!validation.valid) {
+    res.status(500).json({
+      message: "监测点数据校验失败",
+      errors: validation.errors
+    });
+    return;
+  }
+
+  const range = (req.query.range as string) || "7d";
+  if (!TREND_RANGES.includes(range as TrendRange)) {
+    res.status(400).json({ message: "时间范围参数无效，支持 7d、30d、90d" });
+    return;
+  }
+
+  res.json(buildMonitoringPointTrend(point, range));
+});
+
 app.post("/api/monitoring-points", requireAuth, (req, res) => {
   const parsed = monitoringPointSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -1646,5 +1835,7 @@ export {
   WATER_QUALITY_GRADES,
   MONITORING_POINT_TYPES,
   MONITORING_POINT_STATUSES,
-  monitoringPoints
+  monitoringPoints,
+  TREND_RANGES,
+  buildMonitoringPointTrend
 };

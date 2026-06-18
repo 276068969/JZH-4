@@ -11,6 +11,8 @@ let isNotFutureDatetime: (val: string) => boolean;
 let isLeapYear: (year: number) => boolean;
 let getDaysInMonth: (year: number, month: number) => number;
 let monitoringPoints: any[];
+let buildMonitoringPointTrend: any;
+let TREND_RANGES: readonly string[];
 
 const jwtSecret = process.env.JWT_SECRET ?? "development-secret";
 
@@ -38,6 +40,8 @@ before(async () => {
   isLeapYear = mod.isLeapYear;
   getDaysInMonth = mod.getDaysInMonth;
   monitoringPoints = mod.monitoringPoints;
+  buildMonitoringPointTrend = mod.buildMonitoringPointTrend;
+  TREND_RANGES = mod.TREND_RANGES;
 });
 
 describe("日期校验函数 - 严格模式（不依赖 Date 自动进位）", () => {
@@ -509,5 +513,150 @@ describe("监测点 API - 非法日期回归测试", () => {
       }
       assert.equal(monitoringPoints.some((p) => p.id === INVALID_PATCH_ID), false);
     });
+  });
+});
+
+describe("监测点历史趋势 API", () => {
+  const token = generateToken();
+  let validPointId: number;
+  let validPointUpdatedAt: string;
+  let validPoint: any;
+
+  it("获取合法监测点用于测试", async () => {
+    const res = await request(app)
+      .get("/api/monitoring-points")
+      .set("Authorization", `Bearer ${token}`);
+    assert.ok(Array.isArray(res.body));
+    assert.ok(res.body.length > 0);
+    validPointId = res.body[0].id;
+    validPointUpdatedAt = res.body[0].updatedAt;
+    validPoint = res.body[0];
+  });
+
+  it("GET /api/monitoring-points/:id/trend 默认返回 7 天趋势", async () => {
+    const res = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/trend`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.pointId, validPointId);
+    assert.equal(res.body.range, "7d");
+    assert.equal(res.body.granularity, "daily");
+    assert.ok(Array.isArray(res.body.series));
+    assert.equal(res.body.series.length, 3);
+    const metrics = res.body.series.map((s: any) => s.metric);
+    assert.ok(metrics.includes("waterQuality"));
+    assert.ok(metrics.includes("windSpeed"));
+    assert.ok(metrics.includes("temperature"));
+    for (const s of res.body.series) {
+      assert.equal(s.points.length, 7, `${s.metric} 应有 7 个数据点`);
+    }
+    assert.ok(res.body.assessment);
+    assert.equal(typeof res.body.assessment.summary, "string");
+    assert.ok(res.body.assessment.summary.length > 0);
+  });
+
+  it("GET trend range=30d 返回 30 个数据点", async () => {
+    const res = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/trend?range=30d`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.range, "30d");
+    assert.equal(res.body.series[0].points.length, 30);
+  });
+
+  it("GET trend range=90d 返回 90 个数据点", async () => {
+    const res = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/trend?range=90d`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.series[0].points.length, 90);
+  });
+
+  it("GET trend 非法 range 应返回 400", async () => {
+    const res = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/trend?range=1y`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 400);
+    assert.match(res.body.message, /时间范围参数无效/);
+  });
+
+  it("GET trend 不存在的监测点应返回 404", async () => {
+    const res = await request(app)
+      .get("/api/monitoring-points/999999/trend")
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.status, 404);
+    assert.match(res.body.message, /监测点不存在/);
+  });
+
+  it("趋势最后一个数据点应与监测点当前值一致（锚定当前值）", async () => {
+    const detailRes = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/detail`)
+      .set("Authorization", `Bearer ${token}`);
+    const trendRes = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/trend`)
+      .set("Authorization", `Bearer ${token}`);
+    const windSeries = trendRes.body.series.find((s: any) => s.metric === "windSpeed");
+    const tempSeries = trendRes.body.series.find((s: any) => s.metric === "temperature");
+    const wqSeries = trendRes.body.series.find((s: any) => s.metric === "waterQuality");
+    const lastWind = windSeries.points[windSeries.points.length - 1].value;
+    const lastTemp = tempSeries.points[tempSeries.points.length - 1].value;
+    const lastWq = wqSeries.points[wqSeries.points.length - 1].value;
+    assert.equal(lastWind, detailRes.body.point.windSpeed);
+    assert.equal(lastTemp, detailRes.body.point.temperature);
+    assert.equal(lastWq, detailRes.body.point.waterQuality);
+  });
+
+  it("趋势结束日期应锚定监测点 updatedAt", async () => {
+    const res = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/trend?range=7d`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.equal(res.body.to, validPointUpdatedAt.slice(0, 10));
+  });
+
+  it("趋势数据应确定性可复现（相同参数返回相同结果）", async () => {
+    const r1 = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/trend?range=7d`)
+      .set("Authorization", `Bearer ${token}`);
+    const r2 = await request(app)
+      .get(`/api/monitoring-points/${validPointId}/trend?range=7d`)
+      .set("Authorization", `Bearer ${token}`);
+    assert.deepEqual(r1.body.series, r2.body.series);
+    assert.deepEqual(r1.body.assessment, r2.body.assessment);
+  });
+
+  it("buildMonitoringPointTrend 支持的 range 与 TREND_RANGES 一致", () => {
+    for (const range of TREND_RANGES) {
+      const trend = buildMonitoringPointTrend(validPoint, range);
+      assert.equal(trend.range, range);
+      assert.ok(trend.series.length === 3);
+      assert.ok(trend.assessment.summary.length > 0);
+    }
+  });
+
+  it("GET trend 非法日期存量点应返回 500（与 detail 一致）", async () => {
+    const invalidId = 99990;
+    monitoringPoints.push({
+      id: invalidId,
+      name: "趋势测试-非法存量点",
+      seaArea: "东港近岸海域",
+      type: "水质浮标",
+      latitude: 30.729,
+      longitude: 122.819,
+      status: "normal",
+      waterQuality: "II 类",
+      windSpeed: 3.0,
+      temperature: 20.0,
+      updatedAt: "2026-02-30 10:00"
+    });
+    try {
+      const res = await request(app)
+        .get(`/api/monitoring-points/${invalidId}/trend`)
+        .set("Authorization", `Bearer ${token}`);
+      assert.equal(res.status, 500);
+      assert.match(res.body.message, /校验失败/);
+    } finally {
+      const idx = monitoringPoints.findIndex((p) => p.id === invalidId);
+      if (idx !== -1) monitoringPoints.splice(idx, 1);
+    }
   });
 });

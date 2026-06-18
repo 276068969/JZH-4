@@ -75,6 +75,45 @@ export async function fetchMonitoringPointDetail(id: number) {
   return data;
 }
 
+export interface MonitoringTrendPoint {
+  timestamp: string;
+  value: number | string;
+  rank?: number;
+}
+
+export interface MonitoringTrendSeries {
+  metric: string;
+  unit: string;
+  points: MonitoringTrendPoint[];
+}
+
+export interface MonitoringTrendAssessment {
+  waterQualityTrend: string;
+  windSpeedTrend: string;
+  temperatureTrend: string;
+  summary: string;
+}
+
+export interface MonitoringPointTrendResponse {
+  pointId: number;
+  range: string;
+  from: string;
+  to: string;
+  granularity: string;
+  series: MonitoringTrendSeries[];
+  assessment: MonitoringTrendAssessment;
+}
+
+export async function fetchMonitoringPointTrend(
+  id: number,
+  range: string
+): Promise<MonitoringPointTrendResponse> {
+  const { data } = await api.get(`/monitoring-points/${id}/trend`, {
+    params: { range }
+  });
+  return data;
+}
+
 export async function fetchEvents(params?: Record<string, string>) {
   const { data } = await api.get("/events", { params });
   return data;

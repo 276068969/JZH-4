@@ -96,7 +96,7 @@
     <el-drawer
       v-model="drawerVisible"
       title="监测点详情"
-      size="420px"
+      size="560px"
       direction="rtl"
       @close="selectedPointId = null"
     >
@@ -168,6 +168,11 @@
           </div>
         </div>
 
+        <div class="detail-section">
+          <h4 class="detail-section-title">监测数据历史趋势</h4>
+          <MonitoringPointTrend :point-id="detailData.point.id" />
+        </div>
+
         <div class="detail-section" v-if="detailData.alerts?.length">
           <h4 class="detail-section-title">
             活跃告警
@@ -214,6 +219,7 @@ import {
   fetchAlertsSummary,
   fetchEvents
 } from "../services/api";
+import MonitoringPointTrend from "../components/MonitoringPointTrend.vue";
 
 interface Point {
   id: number;
