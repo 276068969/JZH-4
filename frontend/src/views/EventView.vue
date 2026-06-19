@@ -249,13 +249,17 @@ const form = reactive({
 
 const routeStatus = computed(() => {
   const status = route.query.status as string | undefined;
-  return status === "open" ? "open" : status ?? "";
+  if (status === "open") return "open";
+  if (status === "reported") return "reported";
+  if (status === "processing") return "processing";
+  if (status === "resolved") return "resolved";
+  return "";
 });
 
 const filters = reactive({
   category: "",
   level: "",
-  status: routeStatus.value || "",
+  status: routeStatus.value,
   seaArea: ""
 });
 
@@ -263,16 +267,18 @@ const eventsViewFiltered = computed(() => {
   if (filters.status === "open") {
     return events.value.filter((e) => e.status === "reported" || e.status === "processing");
   }
+  if (filters.status) {
+    return events.value.filter((e) => e.status === filters.status);
+  }
   return events.value;
 });
 
 watch(
   () => route.query.status,
   (newStatus) => {
-    if (newStatus === "open") {
-      filters.status = "open";
-    }
-  }
+    filters.status = routeStatus.value;
+  },
+  { immediate: true }
 );
 
 const categoryOptions = [

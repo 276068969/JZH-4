@@ -487,7 +487,8 @@ function handleCardClick(item: CardItem) {
 
   if (item.action) {
     const query: Record<string, string> = {};
-    if (item.action === "/events" && item.query?.status === "open") {
+    if (item.query?.status) {
+      query.status = item.query.status;
     }
     router.push({ path: item.action, query: Object.keys(query).length > 0 ? query : undefined });
   }
