@@ -348,3 +348,28 @@ export async function fetchWaterQualityIssues(): Promise<WaterQualityIssuesRespo
   const { data } = await api.get("/regulation/water-quality-issues");
   return data;
 }
+
+export async function fetchPatrols(params?: Record<string, string>) {
+  const { data } = await api.get("/patrols", { params });
+  return data;
+}
+
+export async function createPatrol(payload: Record<string, unknown>) {
+  const { data } = await api.post("/patrols", payload);
+  return data;
+}
+
+export async function fetchPatrolDetail(id: number) {
+  const { data } = await api.get(`/patrols/${id}`);
+  return data;
+}
+
+export async function updatePatrol(id: number, payload: Record<string, unknown>) {
+  const { data } = await api.patch(`/patrols/${id}`, payload);
+  return data;
+}
+
+export async function escalatePatrol(id: number, payload: Record<string, unknown>) {
+  const { data } = await api.post(`/patrols/${id}/escalate`, payload);
+  return data;
+}

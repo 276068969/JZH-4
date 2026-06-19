@@ -7,6 +7,7 @@
         <el-menu-item index="/sea-areas">海域基础信息</el-menu-item>
         <el-menu-item index="/ships">船舶监管</el-menu-item>
         <el-menu-item v-if="canReportPollution" index="/pollution-alert">污染预警上报</el-menu-item>
+        <el-menu-item index="/patrols">海域巡查记录</el-menu-item>
         <el-menu-item index="/events">事件监管</el-menu-item>
         <el-menu-item index="/admin">后台管理</el-menu-item>
       </el-menu>

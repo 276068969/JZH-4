@@ -121,6 +121,32 @@ UNION ALL
 SELECT e.id, 'processing', 'resolved', '李明', 'supervisor', '2026-06-11 06:30:00', '设备重启后恢复正常运行'
 FROM event_records e WHERE e.title = '北湾气象站离线' AND NOT EXISTS (SELECT 1 FROM event_status_audits WHERE event_id = e.id AND to_status = 'resolved' LIMIT 1);
 
+CREATE TABLE IF NOT EXISTS patrol_records (
+  id SERIAL PRIMARY KEY,
+  sea_area VARCHAR(128) NOT NULL,
+  inspector VARCHAR(64) NOT NULL,
+  inspector_role VARCHAR(32) NOT NULL DEFAULT 'supervisor',
+  patrol_time TIMESTAMP NOT NULL,
+  problems_found TEXT DEFAULT '',
+  on_site_conclusion TEXT DEFAULT '',
+  related_event_id INTEGER,
+  status VARCHAR(32) NOT NULL DEFAULT 'recorded',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_patrol_records_sea_area ON patrol_records(sea_area);
+CREATE INDEX IF NOT EXISTS idx_patrol_records_related_event_id ON patrol_records(related_event_id);
+
+INSERT INTO patrol_records (sea_area, inspector, inspector_role, patrol_time, problems_found, on_site_conclusion, related_event_id, status, created_at)
+SELECT v.sea_area, v.inspector, v.inspector_role, v.patrol_time, v.problems_found, v.on_site_conclusion, v.related_event_id, v.status, v.created_at
+FROM (VALUES
+  ('蓝湾工业岸线', '张伟', 'supervisor', '2026-06-11 08:20:00'::TIMESTAMP, '蓝湾排口附近水面有异常油膜，疑似工业废水偷排', '疑似违法排放，已现场取样并拍照取证，建议立即立案调查', (SELECT id FROM event_records WHERE title = '蓝湾排口疑似违法排放' LIMIT 1), 'escalated', '2026-06-11 08:42:00'::TIMESTAMP),
+  ('南礁保护区', '监管人员', 'supervisor', '2026-06-11 08:40:00'::TIMESTAMP, '核心保护区边缘发现一艘未登记船舶长时间停留，AIS 信号间歇中断', '判定为异常船舶停留，存在非法作业嫌疑，已上报事件监管处置', (SELECT id FROM event_records WHERE title = '南礁保护区异常船舶停留' LIMIT 1), 'escalated', '2026-06-11 08:55:00'::TIMESTAMP),
+  ('北湾养殖区', '李明', 'supervisor', '2026-06-10 22:00:00'::TIMESTAMP, '', '养殖区水域正常，未发现违规排放与异常船舶，设备运行正常', NULL::INTEGER, 'recorded', '2026-06-10 22:15:00'::TIMESTAMP),
+  ('东港近岸海域', '监管人员', 'supervisor', '2026-06-12 09:10:00'::TIMESTAMP, '近岸发现少量漂浮垃圾，未见明显污染源', '属轻度环境问题，已通知保洁船清理，无需上报事件', NULL::INTEGER, 'recorded', '2026-06-12 09:30:00'::TIMESTAMP)
+) AS v(sea_area, inspector, inspector_role, patrol_time, problems_found, on_site_conclusion, related_event_id, status, created_at)
+WHERE NOT EXISTS (SELECT 1 FROM patrol_records WHERE sea_area = v.sea_area AND patrol_time = v.patrol_time);
+
 CREATE TABLE IF NOT EXISTS ships (
   id SERIAL PRIMARY KEY,
   mmsi VARCHAR(16) UNIQUE NOT NULL,

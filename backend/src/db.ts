@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import type { EventRecord, EventStatusAudit } from "./seed.js";
+import type { EventRecord, EventStatusAudit, PatrolRecord } from "./seed.js";
 
 let pool: Pool | null = null;
 
@@ -21,7 +21,9 @@ export async function initDatabase(): Promise<boolean> {
     pool = new Pool({ connectionString: url });
     await pool.query("SELECT 1");
     await ensureEventSchema();
+    await ensurePatrolSchema();
     await seedEventDataIfNeeded();
+    await seedPatrolDataIfNeeded();
     console.log("Database connected, event tables ready");
     return true;
   } catch (err) {
@@ -92,6 +94,45 @@ async function seedEventDataIfNeeded(): Promise<void> {
   }
 }
 
+async function ensurePatrolSchema(): Promise<void> {
+  if (!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS patrol_records (
+      id SERIAL PRIMARY KEY,
+      sea_area VARCHAR(128) NOT NULL,
+      inspector VARCHAR(64) NOT NULL,
+      inspector_role VARCHAR(32) NOT NULL DEFAULT 'supervisor',
+      patrol_time TIMESTAMP NOT NULL,
+      problems_found TEXT DEFAULT '',
+      on_site_conclusion TEXT DEFAULT '',
+      related_event_id INTEGER,
+      status VARCHAR(32) NOT NULL DEFAULT 'recorded',
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_patrol_records_sea_area ON patrol_records(sea_area)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_patrol_records_related_event_id ON patrol_records(related_event_id)
+  `);
+}
+
+async function seedPatrolDataIfNeeded(): Promise<void> {
+  if (!pool) return;
+
+  const patrolCheck = await pool.query("SELECT COUNT(*)::int AS cnt FROM patrol_records");
+  if (patrolCheck.rows[0].cnt === 0) {
+    await pool.query(`
+      INSERT INTO patrol_records (sea_area, inspector, inspector_role, patrol_time, problems_found, on_site_conclusion, related_event_id, status, created_at) VALUES
+        ('蓝湾工业岸线', '张伟', 'supervisor', '2026-06-11 08:20:00', '蓝湾排口附近水面有异常油膜，疑似工业废水偷排', '疑似违法排放，已现场取样并拍照取证，建议立即立案调查', 1, 'escalated', '2026-06-11 08:42:00'),
+        ('南礁保护区', '监管人员', 'supervisor', '2026-06-11 08:40:00', '核心保护区边缘发现一艘未登记船舶长时间停留，AIS 信号间歇中断', '判定为异常船舶停留，存在非法作业嫌疑，已上报事件监管处置', 2, 'escalated', '2026-06-11 08:55:00'),
+        ('北湾养殖区', '李明', 'supervisor', '2026-06-10 22:00:00', '', '养殖区水域正常，未发现违规排放与异常船舶，设备运行正常', NULL, 'recorded', '2026-06-10 22:15:00'),
+        ('东港近岸海域', '监管人员', 'supervisor', '2026-06-12 09:10:00', '近岸发现少量漂浮垃圾，未见明显污染源', '属轻度环境问题，已通知保洁船清理，无需上报事件', NULL, 'recorded', '2026-06-12 09:30:00')
+    `);
+  }
+}
+
 export function formatTs(val: Date | null | undefined): string | undefined {
   if (!val) return undefined;
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -129,12 +170,35 @@ export function mapAuditRow(row: Record<string, unknown>): EventStatusAudit {
   };
 }
 
+export function mapPatrolRow(row: Record<string, unknown>): PatrolRecord {
+  return {
+    id: row.id as number,
+    seaArea: row.sea_area as string,
+    inspector: row.inspector as string,
+    inspectorRole: (row.inspector_role as string) ?? "supervisor",
+    patrolTime: formatTs(row.patrol_time as Date)!,
+    problemsFound: (row.problems_found as string) ?? "",
+    onSiteConclusion: (row.on_site_conclusion as string) ?? "",
+    relatedEventId: (row.related_event_id as number | null) ?? null,
+    status: (row.status as PatrolRecord["status"]) ?? "recorded",
+    createdAt: formatTs(row.created_at as Date)!
+  };
+}
+
 export async function syncEventsToMemory(eventsArray: EventRecord[]): Promise<void> {
   if (!pool) return;
   const { rows } = await pool.query("SELECT * FROM event_records ORDER BY occurred_at DESC");
   const mapped = rows.map((r) => mapEventRow(r as Record<string, unknown>));
   eventsArray.length = 0;
   eventsArray.push(...mapped);
+}
+
+export async function syncPatrolsToMemory(patrolsArray: PatrolRecord[]): Promise<void> {
+  if (!pool) return;
+  const { rows } = await pool.query("SELECT * FROM patrol_records ORDER BY patrol_time DESC");
+  const mapped = rows.map((r) => mapPatrolRow(r as Record<string, unknown>));
+  patrolsArray.length = 0;
+  patrolsArray.push(...mapped);
 }
 
 export async function checkPersistence(): Promise<{

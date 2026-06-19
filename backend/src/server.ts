@@ -4,7 +4,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { evaluateAllRules } from "./alertEngine.js";
-import { checkPersistence, getPool, initDatabase, isDbAvailable, mapAuditRow, mapEventRow, syncEventsToMemory } from "./db.js";
+import { checkPersistence, getPool, initDatabase, isDbAvailable, mapAuditRow, mapEventRow, mapPatrolRow, syncEventsToMemory, syncPatrolsToMemory } from "./db.js";
 import {
   accounts,
   alertResults,
@@ -18,6 +18,7 @@ import {
   shipAnomalies,
   protectedAreaIntrusions,
   shipStayRecords,
+  patrolRecords,
   type AlertMetric,
   type AlertResult,
   type AlertRule,
@@ -30,6 +31,7 @@ import {
   type ShipAnomaly,
   type ProtectedAreaIntrusion,
   type ShipStayRecord,
+  type PatrolRecord,
   type SeaAreaRegulationStats,
   type RegulationStatsResponse,
   type MonitoringPointStats,
@@ -92,6 +94,38 @@ const pollutionAlertSchema = z.object({
   seaArea: z.string().min(2),
   level: z.enum(["low", "medium", "high"]),
   description: z.string().min(5)
+});
+
+const patrolSchema = z.object({
+  seaArea: z.string().min(2, "巡查海域至少2个字符"),
+  inspector: z.string().min(2, "巡查人员至少2个字符"),
+  patrolTime: z
+    .string()
+    .refine(isValidDatetimeString, "巡查时间格式必须为 YYYY-MM-DD HH:mm")
+    .refine(isNotFutureDatetime, "巡查时间不能是未来时间")
+    .optional(),
+  problemsFound: z.string().default(""),
+  onSiteConclusion: z.string().min(2, "现场结论至少2个字符"),
+  relatedEventId: z.number().int().positive().optional()
+});
+
+const patrolUpdateSchema = z.object({
+  seaArea: z.string().min(2).optional(),
+  inspector: z.string().min(2).optional(),
+  patrolTime: z
+    .string()
+    .refine(isValidDatetimeString, "巡查时间格式必须为 YYYY-MM-DD HH:mm")
+    .refine(isNotFutureDatetime, "巡查时间不能是未来时间")
+    .optional(),
+  problemsFound: z.string().optional(),
+  onSiteConclusion: z.string().min(2).optional(),
+  relatedEventId: z.number().int().positive().nullable().optional()
+});
+
+const patrolEscalateSchema = z.object({
+  title: z.string().min(2).optional(),
+  category: z.string().min(2).optional(),
+  level: z.enum(["low", "medium", "high"]).default("medium")
 });
 
 const alertConditionSchema = z.object({
@@ -1574,6 +1608,368 @@ app.get("/api/events/:id/audit", requireAuth, async (req, res) => {
   res.json(audits);
 });
 
+app.get("/api/patrols", requireAuth, async (req, res) => {
+  const seaArea = req.query.seaArea as string | undefined;
+  const inspector = req.query.inspector as string | undefined;
+  const status = req.query.status as string | undefined;
+  const hasProblem = req.query.hasProblem as string | undefined;
+  const relatedEventId = req.query.relatedEventId as string | undefined;
+
+  if (isDbAvailable()) {
+    try {
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+      let idx = 1;
+      if (seaArea) { conditions.push(`sea_area = $${idx++}`); params.push(seaArea); }
+      if (inspector) { conditions.push(`inspector = $${idx++}`); params.push(inspector); }
+      if (status) { conditions.push(`status = $${idx++}`); params.push(status); }
+      if (hasProblem !== undefined) {
+        if (hasProblem === "true") conditions.push(`problems_found <> ''`);
+        else conditions.push(`problems_found = ''`);
+      }
+      if (relatedEventId !== undefined) {
+        if (relatedEventId === "null") conditions.push(`related_event_id IS NULL`);
+        else { conditions.push(`related_event_id = $${idx++}`); params.push(Number(relatedEventId)); }
+      }
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      const { rows } = await getPool()!.query(`SELECT * FROM patrol_records ${where} ORDER BY patrol_time DESC`, params);
+      res.json(rows.map((r) => mapPatrolRow(r as Record<string, unknown>)));
+    } catch {
+      res.status(500).json({ message: "查询巡查记录失败" });
+    }
+    return;
+  }
+
+  let filtered = [...patrolRecords];
+  if (seaArea) filtered = filtered.filter((p) => p.seaArea === seaArea);
+  if (inspector) filtered = filtered.filter((p) => p.inspector === inspector);
+  if (status) filtered = filtered.filter((p) => p.status === status);
+  if (hasProblem !== undefined) {
+    filtered = filtered.filter((p) =>
+      hasProblem === "true" ? p.problemsFound.trim() !== "" : p.problemsFound.trim() === ""
+    );
+  }
+  if (relatedEventId !== undefined) {
+    const rid = relatedEventId === "null" ? null : Number(relatedEventId);
+    filtered = filtered.filter((p) => p.relatedEventId === rid);
+  }
+  filtered.sort((a, b) => new Date(b.patrolTime.replace(" ", "T")).getTime() - new Date(a.patrolTime.replace(" ", "T")).getTime());
+  res.json(filtered);
+});
+
+app.post("/api/patrols", requireAuth, async (req, res) => {
+  const parsed = patrolSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const errorMessages = parsed.error.issues.map((issue) => issue.message).join("；");
+    res.status(400).json({ message: `巡查记录校验失败：${errorMessages}` });
+    return;
+  }
+
+  const user = res.locals.user as { name?: string; username?: string; role?: string };
+  const inspector = parsed.data.inspector || user?.name || user?.username || "巡查人员";
+  const inspectorRole = user?.role || "supervisor";
+  const now = new Date();
+  const patrolTime = parsed.data.patrolTime ?? now.toISOString().slice(0, 16).replace("T", " ");
+  let status: PatrolRecord["status"] = "recorded";
+  let relatedEventId: number | null = null;
+
+  if (parsed.data.relatedEventId) {
+    const evId = parsed.data.relatedEventId;
+    if (isDbAvailable()) {
+      const evCheck = await getPool()!.query("SELECT id FROM event_records WHERE id = $1", [evId]);
+      if (evCheck.rows.length === 0) {
+        res.status(400).json({ message: "关联事件不存在" });
+        return;
+      }
+    } else if (!events.some((e) => e.id === evId)) {
+      res.status(400).json({ message: "关联事件不存在" });
+      return;
+    }
+    relatedEventId = evId;
+    status = "escalated";
+  }
+
+  if (isDbAvailable()) {
+    try {
+      const { rows } = await getPool()!.query(
+        `INSERT INTO patrol_records (sea_area, inspector, inspector_role, patrol_time, problems_found, on_site_conclusion, related_event_id, status, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [parsed.data.seaArea, inspector, inspectorRole, patrolTime, parsed.data.problemsFound, parsed.data.onSiteConclusion, relatedEventId, status, now]
+      );
+      res.status(201).json(mapPatrolRow(rows[0] as Record<string, unknown>));
+    } catch {
+      res.status(500).json({ message: "创建巡查记录失败" });
+    }
+    return;
+  }
+
+  const patrol: PatrolRecord = {
+    id: patrolRecords.length > 0 ? Math.max(...patrolRecords.map((p) => p.id)) + 1 : 1,
+    seaArea: parsed.data.seaArea,
+    inspector,
+    inspectorRole,
+    patrolTime,
+    problemsFound: parsed.data.problemsFound,
+    onSiteConclusion: parsed.data.onSiteConclusion,
+    relatedEventId,
+    status,
+    createdAt: now.toISOString().slice(0, 16).replace("T", " ")
+  };
+  patrolRecords.unshift(patrol);
+  res.status(201).json(patrol);
+});
+
+app.get("/api/patrols/:id", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (isDbAvailable()) {
+    try {
+      const { rows } = await getPool()!.query("SELECT * FROM patrol_records WHERE id = $1", [id]);
+      if (rows.length === 0) {
+        res.status(404).json({ message: "巡查记录不存在" });
+        return;
+      }
+      const patrol = mapPatrolRow(rows[0] as Record<string, unknown>);
+      let relatedEvent = null;
+      if (patrol.relatedEventId) {
+        const evRes = await getPool()!.query("SELECT * FROM event_records WHERE id = $1", [patrol.relatedEventId]);
+        if (evRes.rows.length > 0) {
+          relatedEvent = mapEventRow(evRes.rows[0] as Record<string, unknown>);
+        }
+      }
+      res.json({ patrol, relatedEvent });
+    } catch {
+      res.status(500).json({ message: "查询巡查记录失败" });
+    }
+    return;
+  }
+
+  const patrol = patrolRecords.find((p) => p.id === id);
+  if (!patrol) {
+    res.status(404).json({ message: "巡查记录不存在" });
+    return;
+  }
+  const relatedEvent = patrol.relatedEventId ? events.find((e) => e.id === patrol.relatedEventId) ?? null : null;
+  res.json({ patrol, relatedEvent });
+});
+
+app.patch("/api/patrols/:id", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const parsed = patrolUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const errorMessages = parsed.error.issues.map((issue) => issue.message).join("；");
+    res.status(400).json({ message: `巡查记录校验失败：${errorMessages}` });
+    return;
+  }
+
+  const data = parsed.data;
+
+  if (data.relatedEventId !== undefined && data.relatedEventId !== null) {
+    const evId = data.relatedEventId;
+    if (isDbAvailable()) {
+      const evCheck = await getPool()!.query("SELECT id FROM event_records WHERE id = $1", [evId]);
+      if (evCheck.rows.length === 0) {
+        res.status(400).json({ message: "关联事件不存在" });
+        return;
+      }
+    } else if (!events.some((e) => e.id === evId)) {
+      res.status(400).json({ message: "关联事件不存在" });
+      return;
+    }
+  }
+
+  if (isDbAvailable()) {
+    try {
+      const check = await getPool()!.query("SELECT id FROM patrol_records WHERE id = $1", [id]);
+      if (check.rows.length === 0) {
+        res.status(404).json({ message: "巡查记录不存在" });
+        return;
+      }
+      const updates: string[] = [];
+      const params: unknown[] = [];
+      let idx = 1;
+      if (data.seaArea !== undefined) { updates.push(`sea_area = $${idx++}`); params.push(data.seaArea); }
+      if (data.inspector !== undefined) { updates.push(`inspector = $${idx++}`); params.push(data.inspector); }
+      if (data.patrolTime !== undefined) { updates.push(`patrol_time = $${idx++}`); params.push(data.patrolTime); }
+      if (data.problemsFound !== undefined) { updates.push(`problems_found = $${idx++}`); params.push(data.problemsFound); }
+      if (data.onSiteConclusion !== undefined) { updates.push(`on_site_conclusion = $${idx++}`); params.push(data.onSiteConclusion); }
+      if (data.relatedEventId !== undefined) {
+        updates.push(`related_event_id = $${idx++}`);
+        params.push(data.relatedEventId);
+        updates.push(`status = $${idx++}`);
+        params.push(data.relatedEventId === null ? "recorded" : "escalated");
+      }
+      if (updates.length === 0) {
+        const { rows } = await getPool()!.query("SELECT * FROM patrol_records WHERE id = $1", [id]);
+        res.json(mapPatrolRow(rows[0] as Record<string, unknown>));
+        return;
+      }
+      params.push(id);
+      const { rows } = await getPool()!.query(`UPDATE patrol_records SET ${updates.join(", ")} WHERE id = $${idx} RETURNING *`, params);
+      res.json(mapPatrolRow(rows[0] as Record<string, unknown>));
+    } catch {
+      res.status(500).json({ message: "更新巡查记录失败" });
+    }
+    return;
+  }
+
+  const patrol = patrolRecords.find((p) => p.id === id);
+  if (!patrol) {
+    res.status(404).json({ message: "巡查记录不存在" });
+    return;
+  }
+  if (data.seaArea !== undefined) patrol.seaArea = data.seaArea;
+  if (data.inspector !== undefined) patrol.inspector = data.inspector;
+  if (data.patrolTime !== undefined) patrol.patrolTime = data.patrolTime;
+  if (data.problemsFound !== undefined) patrol.problemsFound = data.problemsFound;
+  if (data.onSiteConclusion !== undefined) patrol.onSiteConclusion = data.onSiteConclusion;
+  if (data.relatedEventId !== undefined) {
+    patrol.relatedEventId = data.relatedEventId;
+    patrol.status = data.relatedEventId === null ? "recorded" : "escalated";
+  }
+  res.json(patrol);
+});
+
+app.post("/api/patrols/:id/escalate", requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  const parsed = patrolEscalateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "上报参数格式错误" });
+    return;
+  }
+
+  const user = res.locals.user as { name?: string; username?: string; role?: string };
+
+  if (isDbAvailable()) {
+    const client = await getPool()!.connect();
+    try {
+      await client.query("BEGIN");
+      const patrolRes = await client.query("SELECT * FROM patrol_records WHERE id = $1 FOR UPDATE", [id]);
+      if (patrolRes.rows.length === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ message: "巡查记录不存在" });
+        return;
+      }
+      const patrolRow = patrolRes.rows[0] as Record<string, unknown>;
+      if (patrolRow.related_event_id !== null && patrolRow.related_event_id !== undefined) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ message: "该巡查记录已关联事件，无需重复上报" });
+        return;
+      }
+
+      const seaArea = patrolRow.sea_area as string;
+      const inspector = (patrolRow.inspector as string) ?? user?.name ?? user?.username ?? "巡查人员";
+      const problemsFound = (patrolRow.problems_found as string) ?? "";
+      if (!problemsFound.trim()) {
+        await client.query("ROLLBACK");
+        res.status(400).json({ message: "未发现问题的巡查记录无需上报为事件" });
+        return;
+      }
+
+      const title = parsed.data.title ?? `[海域巡查] ${seaArea} 巡查发现问题`;
+      const category = parsed.data.category ?? "海域巡查";
+      const level = parsed.data.level;
+      const source = "海域巡查";
+      const reporter = inspector;
+      const disposalNote = `巡查发现：${problemsFound}`;
+      const now = new Date();
+
+      const evRes = await client.query(
+        `INSERT INTO event_records (title, category, sea_area, level, status, reporter, assignee, source, disposal_note, responsible_person, occurred_at)
+         VALUES ($1,$2,$3,$4,'reported',$5,'未分派',$6,$7,'',$8) RETURNING *`,
+        [title, category, seaArea, level, reporter, source, disposalNote, now]
+      );
+      const newEventId = evRes.rows[0].id as number;
+
+      await client.query(
+        `INSERT INTO event_status_audits (event_id, from_status, to_status, operator, operator_role, operated_at, remark)
+         VALUES ($1,'reported','reported',$2,$3,$4,$5)`,
+        [newEventId, reporter, user?.role || "supervisor", now, "由海域巡查记录上报"]
+      );
+
+      await client.query(
+        "UPDATE patrol_records SET related_event_id = $1, status = 'escalated' WHERE id = $2",
+        [newEventId, id]
+      );
+
+      await client.query("COMMIT");
+      await syncEventsToMemory(events);
+      const updatedPatrol = await client.query("SELECT * FROM patrol_records WHERE id = $1", [id]);
+      res.status(201).json({
+        patrol: mapPatrolRow(updatedPatrol.rows[0] as Record<string, unknown>),
+        event: mapEventRow(evRes.rows[0] as Record<string, unknown>),
+        message: "巡查问题已上报为事件，已同步至事件监管"
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("Patrol escalate failed:", err);
+      res.status(500).json({ message: "上报事件失败" });
+    } finally {
+      client.release();
+    }
+    return;
+  }
+
+  const patrol = patrolRecords.find((p) => p.id === id);
+  if (!patrol) {
+    res.status(404).json({ message: "巡查记录不存在" });
+    return;
+  }
+  if (patrol.relatedEventId !== null) {
+    res.status(400).json({ message: "该巡查记录已关联事件，无需重复上报" });
+    return;
+  }
+  if (!patrol.problemsFound.trim()) {
+    res.status(400).json({ message: "未发现问题的巡查记录无需上报为事件" });
+    return;
+  }
+
+  const title = parsed.data.title ?? `[海域巡查] ${patrol.seaArea} 巡查发现问题`;
+  const category = parsed.data.category ?? "海域巡查";
+  const level = parsed.data.level;
+  const source = "海域巡查";
+  const reporter = patrol.inspector;
+  const now = new Date();
+  const nowStr = now.toISOString().slice(0, 16).replace("T", " ");
+
+  const newEvent: EventRecord = {
+    id: events.length > 0 ? Math.max(...events.map((e) => e.id)) + 1 : 1,
+    title,
+    category,
+    seaArea: patrol.seaArea,
+    level,
+    status: "reported",
+    reporter,
+    assignee: "未分派",
+    source,
+    disposalNote: `巡查发现：${patrol.problemsFound}`,
+    responsiblePerson: "",
+    occurredAt: nowStr
+  };
+  events.unshift(newEvent);
+
+  const auditRecord: EventStatusAudit = {
+    id: eventStatusAudits.length > 0 ? Math.max(...eventStatusAudits.map((a) => a.id)) + 1 : 1,
+    eventId: newEvent.id,
+    fromStatus: "reported",
+    toStatus: "reported",
+    operator: reporter,
+    operatorRole: user?.role || "supervisor",
+    operatedAt: nowStr,
+    remark: "由海域巡查记录上报"
+  };
+  eventStatusAudits.push(auditRecord);
+
+  patrol.relatedEventId = newEvent.id;
+  patrol.status = "escalated";
+
+  res.status(201).json({
+    patrol,
+    event: newEvent,
+    message: "巡查问题已上报为事件，已同步至事件监管"
+  });
+});
+
 const userUpdateSchema = z.object({
   name: z.string().min(1).optional(),
   role: z.enum(["admin", "supervisor", "user"]).optional(),
@@ -1902,6 +2298,7 @@ if (!isTestEnv) {
     await initDatabase();
     if (isDbAvailable()) {
       await syncEventsToMemory(events);
+      await syncPatrolsToMemory(patrolRecords);
     }
     initializeAllMonitoringPointHistory();
     console.log(`Ocean regulation backend listening on http://localhost:${port}`);
@@ -1912,6 +2309,7 @@ if (!isTestEnv) {
 export {
   app,
   monitoringPointSchema,
+  patrolSchema,
   isValidDatetimeString,
   isNotFutureDatetime,
   validateMonitoringPoint,
@@ -1922,6 +2320,7 @@ export {
   MONITORING_POINT_TYPES,
   MONITORING_POINT_STATUSES,
   monitoringPoints,
+  patrolRecords,
   TREND_RANGES,
   buildMonitoringPointTrend,
   monitoringPointHistory,

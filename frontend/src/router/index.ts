@@ -15,6 +15,7 @@ const router = createRouter({
         { path: "ships", name: "ships", component: () => import("../views/ShipMonitorView.vue") },
         { path: "events", name: "events", component: () => import("../views/EventView.vue") },
         { path: "pollution-alert", name: "pollution-alert", component: () => import("../views/PollutionAlertView.vue") },
+        { path: "patrols", name: "patrols", component: () => import("../views/PatrolView.vue") },
         { path: "admin", name: "admin", component: () => import("../views/AdminView.vue") }
       ]
     }

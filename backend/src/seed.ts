@@ -86,6 +86,19 @@ export interface EventRecord {
   resolvedAt?: string;
 }
 
+export interface PatrolRecord {
+  id: number;
+  seaArea: string;
+  inspector: string;
+  inspectorRole: string;
+  patrolTime: string;
+  problemsFound: string;
+  onSiteConclusion: string;
+  relatedEventId: number | null;
+  status: "recorded" | "escalated";
+  createdAt: string;
+}
+
 export const accounts: Account[] = [
   {
     id: 1,
@@ -862,6 +875,57 @@ export const eventStatusAudits: EventStatusAudit[] = [
     operatorRole: "supervisor",
     operatedAt: "2026-06-11 06:30",
     remark: "设备重启后恢复正常运行"
+  }
+];
+
+export const patrolRecords: PatrolRecord[] = [
+  {
+    id: 1,
+    seaArea: "蓝湾工业岸线",
+    inspector: "张伟",
+    inspectorRole: "supervisor",
+    patrolTime: "2026-06-11 08:20",
+    problemsFound: "蓝湾排口附近水面有异常油膜，疑似工业废水偷排",
+    onSiteConclusion: "疑似违法排放，已现场取样并拍照取证，建议立即立案调查",
+    relatedEventId: 1001,
+    status: "escalated",
+    createdAt: "2026-06-11 08:42"
+  },
+  {
+    id: 2,
+    seaArea: "南礁保护区",
+    inspector: "监管人员",
+    inspectorRole: "supervisor",
+    patrolTime: "2026-06-11 08:40",
+    problemsFound: "核心保护区边缘发现一艘未登记船舶长时间停留，AIS 信号间歇中断",
+    onSiteConclusion: "判定为异常船舶停留，存在非法作业嫌疑，已上报事件监管处置",
+    relatedEventId: 1002,
+    status: "escalated",
+    createdAt: "2026-06-11 08:55"
+  },
+  {
+    id: 3,
+    seaArea: "北湾养殖区",
+    inspector: "李明",
+    inspectorRole: "supervisor",
+    patrolTime: "2026-06-10 22:00",
+    problemsFound: "",
+    onSiteConclusion: "养殖区水域正常，未发现违规排放与异常船舶，设备运行正常",
+    relatedEventId: null,
+    status: "recorded",
+    createdAt: "2026-06-10 22:15"
+  },
+  {
+    id: 4,
+    seaArea: "东港近岸海域",
+    inspector: "监管人员",
+    inspectorRole: "supervisor",
+    patrolTime: "2026-06-12 09:10",
+    problemsFound: "近岸发现少量漂浮垃圾，未见明显污染源",
+    onSiteConclusion: "属轻度环境问题，已通知保洁船清理，无需上报事件",
+    relatedEventId: null,
+    status: "recorded",
+    createdAt: "2026-06-12 09:30"
   }
 ];
 
