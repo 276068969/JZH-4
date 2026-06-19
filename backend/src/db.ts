@@ -123,12 +123,18 @@ async function seedPatrolDataIfNeeded(): Promise<void> {
 
   const patrolCheck = await pool.query("SELECT COUNT(*)::int AS cnt FROM patrol_records");
   if (patrolCheck.rows[0].cnt === 0) {
+    // related_event_id 通过按标题查 event_records 实际主键动态解析，不硬编码主键：
+    // 复用旧 PostgreSQL 数据卷时 init.sql 不会重跑，而本函数每次启动都会执行，
+    // 若 event_records 主键已非初始序列（如历史插入/删除导致 id≠1/2），硬编码会导致关联错位。
     await pool.query(`
-      INSERT INTO patrol_records (sea_area, inspector, inspector_role, patrol_time, problems_found, on_site_conclusion, related_event_id, status, created_at) VALUES
-        ('蓝湾工业岸线', '张伟', 'supervisor', '2026-06-11 08:20:00', '蓝湾排口附近水面有异常油膜，疑似工业废水偷排', '疑似违法排放，已现场取样并拍照取证，建议立即立案调查', 1, 'escalated', '2026-06-11 08:42:00'),
-        ('南礁保护区', '监管人员', 'supervisor', '2026-06-11 08:40:00', '核心保护区边缘发现一艘未登记船舶长时间停留，AIS 信号间歇中断', '判定为异常船舶停留，存在非法作业嫌疑，已上报事件监管处置', 2, 'escalated', '2026-06-11 08:55:00'),
-        ('北湾养殖区', '李明', 'supervisor', '2026-06-10 22:00:00', '', '养殖区水域正常，未发现违规排放与异常船舶，设备运行正常', NULL, 'recorded', '2026-06-10 22:15:00'),
-        ('东港近岸海域', '监管人员', 'supervisor', '2026-06-12 09:10:00', '近岸发现少量漂浮垃圾，未见明显污染源', '属轻度环境问题，已通知保洁船清理，无需上报事件', NULL, 'recorded', '2026-06-12 09:30:00')
+      INSERT INTO patrol_records (sea_area, inspector, inspector_role, patrol_time, problems_found, on_site_conclusion, related_event_id, status, created_at)
+      SELECT v.sea_area, v.inspector, v.inspector_role, v.patrol_time, v.problems_found, v.on_site_conclusion, v.related_event_id, v.status, v.created_at
+      FROM (VALUES
+        ('蓝湾工业岸线', '张伟', 'supervisor', '2026-06-11 08:20:00'::TIMESTAMP, '蓝湾排口附近水面有异常油膜，疑似工业废水偷排', '疑似违法排放，已现场取样并拍照取证，建议立即立案调查', (SELECT id FROM event_records WHERE title = '蓝湾排口疑似违法排放' LIMIT 1), 'escalated', '2026-06-11 08:42:00'::TIMESTAMP),
+        ('南礁保护区', '监管人员', 'supervisor', '2026-06-11 08:40:00'::TIMESTAMP, '核心保护区边缘发现一艘未登记船舶长时间停留，AIS 信号间歇中断', '判定为异常船舶停留，存在非法作业嫌疑，已上报事件监管处置', (SELECT id FROM event_records WHERE title = '南礁保护区异常船舶停留' LIMIT 1), 'escalated', '2026-06-11 08:55:00'::TIMESTAMP),
+        ('北湾养殖区', '李明', 'supervisor', '2026-06-10 22:00:00'::TIMESTAMP, '', '养殖区水域正常，未发现违规排放与异常船舶，设备运行正常', NULL::INTEGER, 'recorded', '2026-06-10 22:15:00'::TIMESTAMP),
+        ('东港近岸海域', '监管人员', 'supervisor', '2026-06-12 09:10:00'::TIMESTAMP, '近岸发现少量漂浮垃圾，未见明显污染源', '属轻度环境问题，已通知保洁船清理，无需上报事件', NULL::INTEGER, 'recorded', '2026-06-12 09:30:00'::TIMESTAMP)
+      ) AS v(sea_area, inspector, inspector_role, patrol_time, problems_found, on_site_conclusion, related_event_id, status, created_at)
     `);
   }
 }
