@@ -15,7 +15,8 @@
           <el-option label="中" value="medium" />
           <el-option label="低" value="low" />
         </el-select>
-        <el-select v-model="filters.status" placeholder="处置状态" clearable style="width: 120px">
+        <el-select v-model="filters.status" placeholder="处置状态" clearable style="width: 140px">
+          <el-option label="待处置" value="open" />
           <el-option label="已上报" value="reported" />
           <el-option label="处理中" value="processing" />
           <el-option label="已办结" value="resolved" />
@@ -26,7 +27,7 @@
         <el-button @click="resetFilters">重置</el-button>
       </div>
 
-      <el-table :data="events" stripe>
+      <el-table :data="eventsViewFiltered" stripe>
         <el-table-column prop="id" label="编号" width="80" />
         <el-table-column prop="title" label="事件标题" min-width="160" />
         <el-table-column prop="category" label="类型" width="100" />
@@ -201,10 +202,13 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { ElMessage } from "element-plus";
 import { WarningFilled } from "@element-plus/icons-vue";
 import { createEvent, fetchEventAudit, fetchEvents, fetchUsers, updateEventStatus } from "../services/api";
 import SeaAreaRiskRank from "../components/SeaAreaRiskRank.vue";
+
+const route = useRoute();
 
 interface EventRecord {
   id: number;
@@ -243,12 +247,33 @@ const form = reactive({
   source: "人工上报"
 });
 
+const routeStatus = computed(() => {
+  const status = route.query.status as string | undefined;
+  return status === "open" ? "open" : status ?? "";
+});
+
 const filters = reactive({
   category: "",
   level: "",
-  status: "",
+  status: routeStatus.value || "",
   seaArea: ""
 });
+
+const eventsViewFiltered = computed(() => {
+  if (filters.status === "open") {
+    return events.value.filter((e) => e.status === "reported" || e.status === "processing");
+  }
+  return events.value;
+});
+
+watch(
+  () => route.query.status,
+  (newStatus) => {
+    if (newStatus === "open") {
+      filters.status = "open";
+    }
+  }
+);
 
 const categoryOptions = [
   "违法排放",
@@ -274,7 +299,7 @@ function buildFilterParams(): Record<string, string> {
   const params: Record<string, string> = {};
   if (filters.category) params.category = filters.category;
   if (filters.level) params.level = filters.level;
-  if (filters.status) params.status = filters.status;
+  if (filters.status && filters.status !== "open") params.status = filters.status;
   if (filters.seaArea) params.seaArea = filters.seaArea;
   return params;
 }

@@ -1,9 +1,41 @@
 <template>
   <section>
     <div class="metric-grid">
-      <article v-for="item in cards" :key="item.label" class="metric-card">
-        <span>{{ item.label }}</span>
-        <strong :style="{ color: item.color ?? '#17324d' }">{{ item.value }}</strong>
+      <article
+        v-for="item in cards"
+        :key="item.label"
+        :class="[
+          'metric-card',
+          { 'metric-card--abnormal': item.isAbnormal, 'metric-card--clickable': item.clickable }
+        ]"
+        @click="handleCardClick(item)"
+      >
+        <div class="metric-card__header">
+          <span class="metric-card__label">{{ item.label }}</span>
+          <el-icon
+            v-if="item.isAbnormal"
+            class="metric-card__alert-icon"
+            :class="{ 'metric-card__alert-icon--animate': item.isAbnormal }"
+          >
+            <WarningFilled />
+          </el-icon>
+        </div>
+        <div class="metric-card__value-wrapper">
+          <strong
+            class="metric-card__value"
+            :style="{ color: item.color ?? '#17324d' }"
+          >{{ item.displayValue }}</strong>
+          <span v-if="item.unit" class="metric-card__unit">{{ item.unit }}</span>
+        </div>
+        <div v-if="item.isAbnormal && item.hint" class="metric-card__hint">
+          <el-icon class="metric-card__hint-icon"><InfoFilled /></el-icon>
+          <span>{{ item.hint }}</span>
+          <el-icon v-if="item.clickable" class="metric-card__arrow"><ArrowRight /></el-icon>
+        </div>
+        <div v-else-if="item.clickable" class="metric-card__hint metric-card__hint--normal">
+          <span>查看详情</span>
+          <el-icon class="metric-card__arrow"><ArrowRight /></el-icon>
+        </div>
       </article>
     </div>
     <div class="content-grid">
@@ -208,9 +240,10 @@
 
 <script setup lang="ts">
 import * as echarts from "echarts";
-import { Loading } from "@element-plus/icons-vue";
+import { Loading, WarningFilled, InfoFilled, ArrowRight } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import L from "leaflet";
+import { useRouter } from "vue-router";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   fetchMetrics,
@@ -221,6 +254,8 @@ import {
   fetchEvents
 } from "../services/api";
 import MonitoringPointTrend from "../components/MonitoringPointTrend.vue";
+
+const router = useRouter();
 
 interface Point {
   id: number;
@@ -303,14 +338,160 @@ const markerMap = new Map<number, L.CircleMarker>();
 let chartInstance: echarts.ECharts | null = null;
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
-const cards = computed(() => [
-  { label: "监管海域", value: metrics.value.seaAreas ?? 0 },
-  { label: "监测点位", value: metrics.value.monitoringPoints ?? 0 },
-  { label: "预警点位", value: metrics.value.warningPoints ?? 0, color: "#d97706" },
-  { label: "在线船舶", value: metrics.value.shipsOnline ?? 0 },
-  { label: "活跃告警", value: alertSummary.value.active ?? 0, color: "#dc2626" },
-  { label: "待处置事件", value: metrics.value.openEvents ?? 0 }
-]);
+const OFFLINE_THRESHOLD = 0;
+const OPEN_EVENTS_THRESHOLD = 0;
+const WATER_QUALITY_THRESHOLD = 95;
+const WARNING_POINTS_THRESHOLD = 0;
+const ACTIVE_ALERTS_THRESHOLD = 0;
+const ABNORMAL_SHIPS_THRESHOLD = 0;
+
+interface CardItem {
+  label: string;
+  value: number;
+  displayValue: string | number;
+  unit?: string;
+  color?: string;
+  isAbnormal: boolean;
+  hint?: string;
+  clickable: boolean;
+  action?: string;
+  query?: { filter?: string; status?: string };
+}
+
+const cards = computed<CardItem[]>(() => {
+  const monitoringPoints = metrics.value.monitoringPoints ?? 0;
+  const offlinePoints = metrics.value.offlinePoints ?? 0;
+  const warningPoints = metrics.value.warningPoints ?? 0;
+  const openEvents = metrics.value.openEvents ?? 0;
+  const activeAlerts = alertSummary.value.active ?? 0;
+  const waterQualityRate = metrics.value.waterQualityRate ?? 100;
+  const abnormalShips = metrics.value.abnormalShips ?? 0;
+  const shipsOnline = metrics.value.shipsOnline ?? 0;
+
+  return [
+    {
+      label: "监管海域",
+      value: metrics.value.seaAreas ?? 0,
+      displayValue: metrics.value.seaAreas ?? 0,
+      unit: "片",
+      isAbnormal: false,
+      clickable: true,
+      action: "/sea-areas"
+    },
+    {
+      label: "监测点位",
+      value: monitoringPoints,
+      displayValue: monitoringPoints,
+      unit: "个",
+      isAbnormal: false,
+      clickable: true,
+      action: "dashboard",
+      query: { filter: "all" }
+    },
+    {
+      label: "离线点位",
+      value: offlinePoints,
+      displayValue: offlinePoints,
+      unit: "个",
+      color: "#64748b",
+      isAbnormal: offlinePoints > OFFLINE_THRESHOLD,
+      hint: offlinePoints > OFFLINE_THRESHOLD ? `有 ${offlinePoints} 个监测点离线，请检查设备状态` : undefined,
+      clickable: true,
+      action: "dashboard",
+      query: { filter: "offline" }
+    },
+    {
+      label: "预警点位",
+      value: warningPoints,
+      displayValue: warningPoints,
+      unit: "个",
+      color: "#d97706",
+      isAbnormal: warningPoints > WARNING_POINTS_THRESHOLD,
+      hint: warningPoints > WARNING_POINTS_THRESHOLD ? `有 ${warningPoints} 个监测点处于预警状态` : undefined,
+      clickable: true,
+      action: "dashboard",
+      query: { filter: "warning" }
+    },
+    {
+      label: "水质达标率",
+      value: waterQualityRate,
+      displayValue: waterQualityRate.toFixed(1),
+      unit: "%",
+      color: waterQualityRate < WATER_QUALITY_THRESHOLD ? "#dc2626" : "#0f766e",
+      isAbnormal: waterQualityRate < WATER_QUALITY_THRESHOLD,
+      hint: waterQualityRate < WATER_QUALITY_THRESHOLD
+        ? `水质达标率 ${waterQualityRate.toFixed(1)}% 低于阈值 ${WATER_QUALITY_THRESHOLD}%，请关注`
+        : undefined,
+      clickable: true,
+      action: "/sea-areas"
+    },
+    {
+      label: "在线船舶",
+      value: shipsOnline,
+      displayValue: shipsOnline,
+      unit: "艘",
+      isAbnormal: false,
+      clickable: true,
+      action: "/ships"
+    },
+    {
+      label: "异常船舶",
+      value: abnormalShips,
+      displayValue: abnormalShips,
+      unit: "艘",
+      color: "#dc2626",
+      isAbnormal: abnormalShips > ABNORMAL_SHIPS_THRESHOLD,
+      hint: abnormalShips > ABNORMAL_SHIPS_THRESHOLD ? `发现 ${abnormalShips} 艘异常船舶，建议核查` : undefined,
+      clickable: true,
+      action: "/ships"
+    },
+    {
+      label: "活跃告警",
+      value: activeAlerts,
+      displayValue: activeAlerts,
+      unit: "条",
+      color: "#dc2626",
+      isAbnormal: activeAlerts > ACTIVE_ALERTS_THRESHOLD,
+      hint: activeAlerts > ACTIVE_ALERTS_THRESHOLD ? `当前有 ${activeAlerts} 条活跃告警待处置` : undefined,
+      clickable: true,
+      action: "/admin"
+    },
+    {
+      label: "待处置事件",
+      value: openEvents,
+      displayValue: openEvents,
+      unit: "件",
+      color: openEvents > OPEN_EVENTS_THRESHOLD ? "#dc2626" : "#17324d",
+      isAbnormal: openEvents > OPEN_EVENTS_THRESHOLD,
+      hint: openEvents > OPEN_EVENTS_THRESHOLD ? `有 ${openEvents} 件事件待处置，请及时处理` : undefined,
+      clickable: true,
+      action: "/events",
+      query: { status: "open" }
+    }
+  ];
+});
+
+function handleCardClick(item: CardItem) {
+  if (!item.clickable) return;
+
+  if (item.action === "dashboard") {
+    if (item.query?.filter) {
+      activeFilter.value = item.query.filter;
+      const target = document.querySelector(".content-grid");
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+    return;
+  }
+
+  if (item.action) {
+    const query: Record<string, string> = {};
+    if (item.action === "/events" && item.query?.status === "open") {
+    }
+    router.push({ path: item.action, query: Object.keys(query).length > 0 ? query : undefined });
+  }
+}
 
 const pointAlertCountMap = computed(() => {
   const map = new Map<number, number>();
@@ -665,6 +846,158 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #dde8ee;
+  padding: 18px 16px;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, #0c5273, #0f766e);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+
+.metric-card--clickable {
+  cursor: pointer;
+}
+
+.metric-card--clickable:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(12, 82, 115, 0.12);
+  border-color: #0c5273;
+}
+
+.metric-card--clickable:hover::before {
+  transform: scaleX(1);
+}
+
+.metric-card--abnormal {
+  border-color: #fecaca;
+  background: linear-gradient(180deg, #fff5f5 0%, #ffffff 60%);
+}
+
+.metric-card--abnormal::before {
+  background: linear-gradient(90deg, #dc2626, #f97316);
+  transform: scaleX(1);
+}
+
+.metric-card--abnormal.metric-card--clickable:hover {
+  box-shadow: 0 8px 24px rgba(220, 38, 38, 0.15);
+  border-color: #dc2626;
+}
+
+.metric-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.metric-card__label {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+.metric-card__alert-icon {
+  color: #dc2626;
+  font-size: 18px;
+}
+
+.metric-card__alert-icon--animate {
+  animation: alert-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes alert-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.7;
+  }
+}
+
+.metric-card__value-wrapper {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.metric-card__value {
+  display: block;
+  color: #0c5273;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-card__unit {
+  font-size: 14px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.metric-card__hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #fef2f2;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #b91c1c;
+  line-height: 1.5;
+  border-left: 3px solid #dc2626;
+}
+
+.metric-card__hint--normal {
+  background: #f0f7ff;
+  color: #0c5273;
+  border-left-color: #0c5273;
+}
+
+.metric-card__hint-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.metric-card__hint span {
+  flex: 1;
+  min-width: 0;
+}
+
+.metric-card__arrow {
+  flex-shrink: 0;
+  font-size: 14px;
+  opacity: 0.7;
+  transition: transform 0.2s ease;
+}
+
+.metric-card--clickable:hover .metric-card__arrow {
+  transform: translateX(3px);
+  opacity: 1;
+}
+
 .filter-bar {
   display: flex;
   gap: 8px;

@@ -21,22 +21,20 @@ body {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  grid-template-columns: repeat(3, minmax(200px, 1fr));
   gap: 16px;
 }
 
-.metric-card {
-  border-radius: 8px;
-  background: #fff;
-  border: 1px solid #dde8ee;
-  padding: 16px;
+@media (min-width: 1280px) {
+  .metric-grid {
+    grid-template-columns: repeat(3, minmax(200px, 1fr));
+  }
 }
 
-.metric-card strong {
-  display: block;
-  margin-top: 8px;
-  color: #0c5273;
-  font-size: 28px;
+@media (min-width: 1600px) {
+  .metric-grid {
+    grid-template-columns: repeat(3, minmax(200px, 1fr));
+  }
 }
 
 .content-grid {
